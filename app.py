@@ -669,7 +669,7 @@ mode = top_cols[0].radio("Mode", ["Classica", "Prossimi Step"], index=0, horizon
 # Halving controls (solo data visibile; subsidy fisse dietro le quinte)
 with top_cols[1]:
     st.write("Prossimo halving (subsidy 3.125 → 1.5625 BTC)")
-    halving_date_input = st.date_input("Data halving", value=date(2028,4,20))
+    halving_date_input = st.date_input("Data halving", value=date(2028,4,11))
     subsidy_before = 3.125
     subsidy_after  = 1.5625
 
