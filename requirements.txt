@@ -1,0 +1,8 @@
+streamlit
+streamlit-authenticator
+requests
+pandas
+numpy
+plotly
+python-dateutil
+pulp
