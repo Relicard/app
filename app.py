@@ -856,14 +856,17 @@ if mode == "Classica":
                 k3.metric("Total CAPEX", f"${df.attrs['total_capex_usd']:,.0f}")
                 k4.metric("Payback (months)", df.attrs["payback_months"] if df.attrs["payback_months"] else "—")
 
-                st.dataframe(df[["month","btc_price_usd","subsidy_btc","btc_month","rev_usd","energy_cost_usd","fixed_opex_usd","ebitda_usd","cashflow_usd","cum_cashflow_usd"]])
+                st.dataframe(
+                    df[["month","btc_price_usd","subsidy_btc","btc_month","rev_usd","energy_cost_usd","fixed_opex_usd","ebitda_usd","cashflow_usd","cum_cashflow_usd"]],
+                    key=f"df_classic_{idx}"
+                )
 
                 # Charts
                 fig = go.Figure()
                 fig.add_trace(go.Bar(x=df["month"], y=df["cashflow_usd"], name="Monthly Cashflow"))
                 fig.add_trace(go.Scatter(x=df["month"], y=df["cum_cashflow_usd"], name="Cumulative", mode="lines+markers"))
                 fig.update_layout(title=f"Cashflow — {scn.name}", xaxis_title="Month", yaxis_title="USD", barmode="group")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"cf_classic_{idx}")
 
                 # Support charts
                 c1, c2, c3 = st.columns(3)
@@ -871,12 +874,12 @@ if mode == "Classica":
                     f1 = go.Figure()
                     f1.add_trace(go.Bar(x=df["month"], y=df["btc_month"], name="BTC / month"))
                     f1.update_layout(title="BTC produced", xaxis_title="Month", yaxis_title="BTC")
-                    st.plotly_chart(f1, use_container_width=True)
+                    st.plotly_chart(f1, use_container_width=True, key=f"btc_classic_{idx}")
                 with c2:
                     f2 = go.Figure()
                     f2.add_trace(go.Scatter(x=df["month"], y=df["fleet_ths"], mode="lines+markers", name="Fleet TH/s"))
                     f2.update_layout(title="Fleet TH/s over time", xaxis_title="Month", yaxis_title="TH/s")
-                    st.plotly_chart(f2, use_container_width=True)
+                    st.plotly_chart(f2, use_container_width=True, key=f"fleet_classic_{idx}")
                 with c3:
                     f3 = go.Figure()
                     f3.add_trace(go.Scatter(x=df["month"], y=df["it_power_kw"], mode="lines+markers", name="IT kW"))
@@ -899,7 +902,7 @@ if mode == "Classica":
                     "Cum CF @ 36m $": float(df.loc[min(len(df)-1,35), "cum_cashflow_usd"]) if len(df) >= 12 else float(df.iloc[-1]["cum_cashflow_usd"]) ,
                 })
             comp_df = pd.DataFrame(comp_rows)
-            st.dataframe(comp_df)
+            st.dataframe(comp_df, key="df_compare_classic")
 
             best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
             if not best.empty:
@@ -1120,31 +1123,34 @@ else:
                 k3.metric("Total CAPEX (t0 + steps)", f"${df.attrs['total_capex_usd']:,.0f}")
                 k4.metric("Payback (months)", df.attrs["payback_months"] if df.attrs["payback_months"] else "—")
 
-                st.dataframe(df[["month","btc_price_usd","subsidy_btc","btc_month","rev_usd","energy_cost_usd","fixed_opex_usd","ebitda_usd","cashflow_usd","cum_cashflow_usd"]])
-
+                st.dataframe(
+                    df[["month","btc_price_usd","subsidy_btc","btc_month","rev_usd","energy_cost_usd","fixed_opex_usd","ebitda_usd","cashflow_usd","cum_cashflow_usd"]],
+                    key=f"df_steps_{idx}"
+                )
+                
                 # Charts
                 fig = go.Figure()
                 fig.add_trace(go.Bar(x=df["month"], y=df["cashflow_usd"], name="Monthly Cashflow"))
                 fig.add_trace(go.Scatter(x=df["month"], y=df["cum_cashflow_usd"], name="Cumulative", mode="lines+markers"))
                 fig.update_layout(title=f"Cashflow — {scn.name} (with Steps)", xaxis_title="Month", yaxis_title="USD", barmode="group")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"cf_steps_{idx}")
 
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     f1 = go.Figure()
                     f1.add_trace(go.Bar(x=df["month"], y=df["btc_month"], name="BTC / month"))
                     f1.update_layout(title="BTC produced", xaxis_title="Month", yaxis_title="BTC")
-                    st.plotly_chart(f1, use_container_width=True)
+                    st.plotly_chart(f1, use_container_width=True, key=f"btc_steps_{idx}")
                 with c2:
                     f2 = go.Figure()
                     f2.add_trace(go.Scatter(x=df["month"], y=df["fleet_ths"], mode="lines+markers", name="Fleet TH/s"))
                     f2.update_layout(title="Fleet TH/s over time", xaxis_title="Month", yaxis_title="TH/s")
-                    st.plotly_chart(f2, use_container_width=True)
+                    st.plotly_chart(f2, use_container_width=True, key=f"fleet_steps_{idx}")
                 with c3:
                     f3 = go.Figure()
                     f3.add_trace(go.Scatter(x=df["month"], y=df["it_power_kw"], mode="lines+markers", name="IT kW"))
                     f3.update_layout(title="IT Power (kW) over time", xaxis_title="Month", yaxis_title="kW")
-                    st.plotly_chart(f3, use_container_width=True)
+                    st.plotly_chart(f3, use_container_width=True, key=f"it_steps_{idx}")
 
         with tabs[-1]:
             comp_rows = []
@@ -1161,7 +1167,7 @@ else:
                     "IT kW (final)": float(df.iloc[-1]["it_power_kw"]) if len(df) else 0.0,
                 })
             comp_df = pd.DataFrame(comp_rows)
-            st.dataframe(comp_df)
+            st.dataframe(comp_df, key="df_compare_classic")
 
             best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
             if not best.empty:
