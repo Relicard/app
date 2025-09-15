@@ -884,7 +884,7 @@ if mode == "Classica":
                     f3 = go.Figure()
                     f3.add_trace(go.Scatter(x=df["month"], y=df["it_power_kw"], mode="lines+markers", name="IT kW"))
                     f3.update_layout(title="IT Power (kW) over time", xaxis_title="Month", yaxis_title="kW")
-                    st.plotly_chart(f3, use_container_width=True)
+                    st.plotly_chart(f3, use_container_width=True, key=f"fleet_classic_{idx}")
 
         # Comparison tab
         with tabs[-1]:
