@@ -49,8 +49,9 @@ def require_login():
         st.stop()
 
 require_login()
+
 # -----------------------------
-# Helpers: API fetchers (cached)
+# API fetchers (cached)
 # -----------------------------
 
 HEADERS = {"User-Agent": "DESMO-Optimizer/1.1 (https://desmo.example)"}
@@ -113,12 +114,6 @@ def fetch_block_reward_btc() -> Optional[float]:
 # --- Average Fees 7d (mempool.space) ---
 @st.cache_data(ttl=900)
 def fetch_avg_fees_per_block_btc_7d(max_blocks: int = 1200) -> Optional[float]:
-    """
-    Average fees per block (BTC) for last ~7 days using mempool.space REST API.
-    Paginates /api/v1/blocks-extras backward by height (15 blocks/page),
-    collects extras.totalFees (sats) -> converts to BTC -> returns mean.
-    Returns None on failure.
-    """
     try:
         url = "https://mempool.space/api/v1/blocks-extras"
         r = requests.get(url, timeout=15, headers=HEADERS)
@@ -234,11 +229,11 @@ class Scenario:
     # Fleet (units per model)
     fleet: Dict[str, int]
     # Power & site
-    pue: float  # e.g. 1.05..1.2
-    uptime_pct: float  # 0..100
+    pue: float  
+    uptime_pct: float 
     # Costs
     fixed_opex_month_usd: float
-    variable_energy_usd_per_kwh: float  # flat, unless price curve uploaded
+    variable_energy_usd_per_kwh: float 
     capex_asics_usd: float
     capex_container_usd: float
     capex_transformer_usd: float
@@ -412,7 +407,6 @@ def simulate_scenario_with_steps(
     subsidy_before: float,
     subsidy_after: float,
 ) -> pd.DataFrame:
-    """Simulate base scenario + future steps."""
     months = make_month_index(scn.months_horizon)
 
     # State (start from base)
@@ -529,7 +523,7 @@ def simulate_scenario_with_steps(
     return df
 
 # -----------------------------
-# Optimizer (Budget ASIC) — functions kept for future use (UI disabled)
+# Optimizer (Budget ASIC)
 # -----------------------------
 
 def per_unit_monthly_ebitda_series(
