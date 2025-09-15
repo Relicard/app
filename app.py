@@ -660,7 +660,7 @@ def optimize_asic_budget(
 # UI — Global controls
 # -----------------------------
 
-st.title("⚡ DESMO Bitcoin Mining Optimizer")
+st.title("⚡ DESMO Bitcoin Mining Optimizer")   
 st.caption("Model mining economics, compare scenarios, schedule future steps, and (optimizer UI disabilitato) ottimizza la fleet sotto budget.")
 
 top_cols = st.columns([1,1,2])
@@ -698,7 +698,7 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Energy Pricing")
-    flat_price = st.number_input("Flat $/kWh (fallback se nessuna curva)", min_value=0.0, step=0.001, value=0.05, format="%.3f")
+    flat_price = st.number_input("Flat $/kWh", min_value=0.0, step=0.001, value=0.05, format="%.3f")
     uploaded_csv = st.file_uploader("Curva oraria opzionale CSV (colonna 'price_usd_per_kwh')", type=["csv"])
     price_curve = None
     if uploaded_csv is not None:
