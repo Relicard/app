@@ -879,12 +879,12 @@ if mode == "Classica":
                     f2 = go.Figure()
                     f2.add_trace(go.Scatter(x=df["month"], y=df["fleet_ths"], mode="lines+markers", name="Fleet TH/s"))
                     f2.update_layout(title="Fleet TH/s over time", xaxis_title="Month", yaxis_title="TH/s")
-                    st.plotly_chart(f2, use_container_width=True, key=f"fleet_classic_{idx}")
+                    st.plotly_chart(f2, use_container_width=True, key=f"ths_classic_{idx}")
                 with c3:
                     f3 = go.Figure()
                     f3.add_trace(go.Scatter(x=df["month"], y=df["it_power_kw"], mode="lines+markers", name="IT kW"))
                     f3.update_layout(title="IT Power (kW) over time", xaxis_title="Month", yaxis_title="kW")
-                    st.plotly_chart(f3, use_container_width=True, key=f"fleet_classic_{idx}")
+                    st.plotly_chart(f3, use_container_width=True, key=f"kw_classic_{idx}")
 
         # Comparison tab
         with tabs[-1]:
@@ -1145,12 +1145,12 @@ else:
                     f2 = go.Figure()
                     f2.add_trace(go.Scatter(x=df["month"], y=df["fleet_ths"], mode="lines+markers", name="Fleet TH/s"))
                     f2.update_layout(title="Fleet TH/s over time", xaxis_title="Month", yaxis_title="TH/s")
-                    st.plotly_chart(f2, use_container_width=True, key=f"fleet_steps_{idx}")
+                    st.plotly_chart(f2, use_container_width=True, key=f"ths_steps_{idx}")
                 with c3:
                     f3 = go.Figure()
                     f3.add_trace(go.Scatter(x=df["month"], y=df["it_power_kw"], mode="lines+markers", name="IT kW"))
                     f3.update_layout(title="IT Power (kW) over time", xaxis_title="Month", yaxis_title="kW")
-                    st.plotly_chart(f3, use_container_width=True, key=f"it_steps_{idx}")
+                    st.plotly_chart(f3, use_container_width=True, key=f"kw_steps_{idx}")
 
         with tabs[-1]:
             comp_rows = []
