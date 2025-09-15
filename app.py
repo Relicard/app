@@ -661,14 +661,14 @@ def optimize_asic_budget(
 # -----------------------------
 
 st.title("⚡ DESMO Bitcoin Mining Optimizer")   
-st.caption("Model mining economics, compare scenarios, schedule future steps, and (optimizer UI disabilitato) ottimizza la fleet sotto budget.")
+st.caption("Model mining economics, compare scenarios, schedule future steps and optimize ASIC budget.")
 
 top_cols = st.columns([1,1,2])
-mode = top_cols[0].radio("Mode", ["Classica", "Prossimi Step"], index=0, horizontal=True)
+mode = top_cols[0].radio("Mode", ["Classic", "Next Steps"], index=0, horizontal=True)
 
 # Halving controls (solo data visibile; subsidy fisse dietro le quinte)
 with top_cols[1]:
-    st.write("Prossimo halving (subsidy 3.125 → 1.5625 BTC)")
+    st.write("Next halving (3.125 → 1.5625 BTC)")
     halving_date_input = st.date_input("Data halving", value=date(2028,4,11))
     subsidy_before = 3.125
     subsidy_after  = 1.5625
