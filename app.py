@@ -1,4 +1,4 @@
-# DESMO Bitcoin Mining Optimizer — Streamlit (Enhanced)
+# DESMO Bitcoin Mining Optimizer 
 
 from __future__ import annotations
 
@@ -7,13 +7,13 @@ from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, date, timedelta
 
-import requests, pandas as pd, numpy as np
-from dateutil.relativedelta import relativedelta
-import streamlit as st
-import plotly.graph_objects as go
+import requests, pandas as pd, numpy as np # type: ignore
+from dateutil.relativedelta import relativedelta 
+import streamlit as st # type: ignore
+import plotly.graph_objects as go # type: ignore
 import os
 
-# Try optional exact ILP optimizer (functions kept, UI disabled)
+
 try:
     import pulp  # type: ignore
     HAS_PULP = True
@@ -736,7 +736,7 @@ if mode == "Classica":
     st.subheader("2) Scenarios")
 
     if "scenarios" not in st.session_state:
-        st.session_state.scenarios: List[Scenario] = []
+        st.session_state.scenarios: List[Scenario] = [] # type: ignore
 
     # --- Fleet grid OUTSIDE the form for real-time budget calc ---
     st.markdown("**Fleet (units per model)**")
@@ -913,9 +913,9 @@ else:
     st.subheader("2) Base Scenarios (t0)")
 
     if "scenarios_ns" not in st.session_state:
-        st.session_state.scenarios_ns: List[Scenario] = []
+        st.session_state.scenarios_ns: List[Scenario] = [] # type: ignore
     if "future_steps" not in st.session_state:
-        st.session_state.future_steps: List[FutureStep] = []
+        st.session_state.future_steps: List[FutureStep] = [] # type: ignore
 
     # --- Fleet grid OUTSIDE the form for real-time budget calc (t0) ---
     st.markdown("**Fleet (units per model) — t0**")
