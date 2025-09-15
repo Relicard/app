@@ -664,7 +664,7 @@ st.title("⚡ DESMO Bitcoin Mining Optimizer")
 st.caption("Model mining economics, compare scenarios, schedule future steps and optimize ASIC budget.")
 
 top_cols = st.columns([1,1,2])
-mode = top_cols[0].radio(index=0, horizontal=True)
+mode = top_cols[0].radio("Mode", ["Classic", "Next Steps"], index=0, horizontal=True)
 
 # Halving controls (solo data visibile; subsidy fisse dietro le quinte)
 with top_cols[1]:
