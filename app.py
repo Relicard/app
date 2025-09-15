@@ -1,16 +1,5 @@
 # DESMO Bitcoin Mining Optimizer — Streamlit (Enhanced)
-# -------------------------------------------------------------
-# One-file Streamlit app to model Bitcoin mining economics with
-# live network data, A/B comparisons, future "next steps" schedules,
-# halving-aware rewards, and (UI disabled) an ASIC budget optimizer.
-# -------------------------------------------------------------
-# How to run:
-#   1) pip install streamlit requests pandas numpy plotly python-dateutil
-#      (optional, for exact optimizer): pip install pulp
-#   2) streamlit run app.py
-# -------------------------------------------------------------
 
-# DESMO Bitcoin Mining Optimizer — Streamlit (Enhanced)
 from __future__ import annotations
 
 import math, time
@@ -22,6 +11,7 @@ import requests, pandas as pd, numpy as np
 from dateutil.relativedelta import relativedelta
 import streamlit as st
 import plotly.graph_objects as go
+import os
 
 # Try optional exact ILP optimizer (functions kept, UI disabled)
 try:
@@ -35,8 +25,11 @@ except Exception:
 # -----------------------------
 st.set_page_config(page_title="DESMO Mining Optimizer", layout="wide")
 
+USERNAME = st.secrets.get("USERNAME", os.getenv("USERNAME"))
+PASSWORD = st.secrets.get("PASSWORD", os.getenv("PASSWORD"))
+
 # -----------------------------
-# Simple Login (user/user)
+# Simple Login
 # -----------------------------
 def require_login():
     st.session_state.setdefault("auth_ok", False)
@@ -46,7 +39,7 @@ def require_login():
             p = st.text_input("Password", type="password")
             ok = st.form_submit_button("Entra")
         if ok:
-            if u == "user" and p == "user":
+            if u == USERNAME and p == PASSWORD:
                 st.session_state["auth_ok"] = True
                 st.rerun()
             else:
@@ -56,11 +49,6 @@ def require_login():
         st.stop()
 
 require_login()
-
-# --- da qui in poi il resto della tua app ---
-
-
-
 # -----------------------------
 # Helpers: API fetchers (cached)
 # -----------------------------
