@@ -8,10 +8,24 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, date, timedelta
 
 import requests, pandas as pd, numpy as np # type: ignore
-from dateutil.relativedelta import relativedelta 
+from dateutil.relativedelta import relativedelta  # type: ignore
 import streamlit as st # type: ignore
 import plotly.graph_objects as go # type: ignore
 import os
+
+def get_secret(name: str, default: str = "") -> str:
+    v = os.getenv(name)
+    if v:
+        return v
+    try:
+        return st.secrets[name]
+    except Exception:
+        return default
+
+try:
+    import gridstatus as gs  # type: ignore
+except Exception:
+    HAS_GRIDSTATUS = False
 
 
 try:
@@ -23,6 +37,7 @@ except Exception:
 # -----------------------------
 # Config
 # -----------------------------
+
 st.set_page_config(page_title="DESMO Mining Optimizer", layout="wide")
 
 USERNAME = st.secrets.get("USERNAME", os.getenv("USERNAME"))
@@ -53,7 +68,6 @@ require_login()
 # -----------------------------
 # API fetchers (cached)
 # -----------------------------
-
 HEADERS = {"User-Agent": "DESMO-Optimizer/1.1 (https://desmo.example)"}
 
 @st.cache_data(ttl=300)
@@ -157,6 +171,39 @@ def fetch_avg_fees_per_block_btc_7d(max_blocks: int = 1200) -> Optional[float]:
         return float(np.mean(fees_btc))
     except Exception:
         return None
+    
+@st.cache_data(ttl=60)
+def fetch_ercot_rtm_price_per_kwh_api(
+    api_key: str,
+    location: str = "PIONR_DJ_RN",
+    dataset_id: str = "ercot_lmp_by_settlement_point",
+) -> Optional[float]:
+    """
+    Legge l'ultimo LMP RTM ($/MWh) per 'location' e lo converte in $/kWh.
+    """
+    try:
+        url = f"https://api.gridstatus.io/v1/datasets/{dataset_id}/query"
+        params = {
+            "api_key": api_key,          # <-- chiave in query (massima compatibilità)
+            "time": "latest",
+            "filter_column": "location",
+            "filter_value": location,
+            "order": "desc",
+            "limit": 1,
+        }
+        r = requests.get(url, params=params, timeout=15)
+        r.raise_for_status()
+        rows = r.json().get("data", [])
+        if not rows:
+            st.warning(f"Nessun dato ERCOT per location={location}.")
+            return None
+        price_mwh = float(rows[0]["lmp"])
+        return price_mwh / 1000.0  # $/kWh
+    except Exception as e:
+        st.error(f"Errore ERCOT RTM: {e}")
+        return None
+
+
 
 # -----------------------------
 # Mining math & halving
@@ -306,6 +353,7 @@ def build_price_curve_for_month(hours: int, flat: float, uploaded: Optional[np.n
         return np.full(hours, flat, dtype=float)
     reps = int(math.ceil(hours / len(uploaded)))
     return np.resize(np.tile(uploaded, reps), hours)
+
 
 def simulate_scenario(
     scn: Scenario,
@@ -695,11 +743,80 @@ with st.sidebar:
         st.metric("Height", f"{height:,}" if height else "—")
         st.metric("Difficulty", f"{diff:,.0f}" if diff else "—")
         st.metric("Network Hashrate (TH/s)", f"{net_ths:,.0f}" if net_ths==net_ths else "—")
-
+            
     st.divider()
     st.subheader("Energy Pricing")
-    flat_price = st.number_input("Flat $/kWh", min_value=0.0, step=0.001, value=0.05, format="%.3f")
-    uploaded_csv = st.file_uploader("Curva oraria opzionale CSV (colonna 'price_usd_per_kwh')", type=["csv"])
+
+    price_source = st.radio(
+        "Fonte prezzo energia",
+        ["Flat", "ERCOT RTM (Grid Status API)"],
+        index=0, horizontal=True, key="price_source",
+    )
+
+    ercot_price = None
+    if price_source == "ERCOT RTM (Grid Status API)":
+        GRIDSTATUS_API_KEY = st.secrets.get("GRIDSTATUS_API_KEY", os.getenv("GRIDSTATUS_API_KEY"))
+
+        if not GRIDSTATUS_API_KEY:
+            st.warning(
+                "⚠️ Nessuna API key trovata. Aggiungi `GRIDSTATUS_API_KEY` in `.streamlit/secrets.toml` "
+                "oppure come variabile d'ambiente per usare l’ERCOT RTM."
+            )
+        else:
+            location = st.selectbox(
+                "Preset location",
+                ["PIONR_DJ_RN","LZ_WEST","LZ_NORTH","LZ_SOUTH","LZ_HOUSTON",
+                "NORTH_HUB","SOUTH_HUB","WEST_HUB","HOUSTON_HUB",
+                "HB_HOUSTON","HB_NORTH","HB_SOUTH","HB_WEST"],
+                index=0
+            )
+            with st.spinner("Recupero prezzo ERCOT RTM…"):
+                ercot_price = fetch_ercot_rtm_price_per_kwh_api(GRIDSTATUS_API_KEY, location)
+
+            st.metric("ERCOT RTM (live) $/kWh", f"{ercot_price:.5f}" if ercot_price is not None else "—")
+            st.caption("Fonte: Grid Status API — ultimo SCED (5-min).")
+        
+        location = st.selectbox(
+            "Preset location",
+            ["PIONR_DJ_RN","LZ_WEST","LZ_NORTH","LZ_SOUTH","LZ_HOUSTON",
+             "NORTH_HUB","SOUTH_HUB","WEST_HUB","HOUSTON_HUB",
+             "HB_HOUSTON","HB_NORTH","HB_SOUTH","HB_WEST"],
+            index=0
+        )
+        with st.spinner("Recupero prezzo ERCOT RTM…"):
+            ercot_price = fetch_ercot_rtm_price_per_kwh_api(api_key, location)
+
+        st.metric("ERCOT RTM (live) $/kWh", f"{ercot_price:.5f}" if ercot_price is not None else "—")
+        st.caption("Fonte: Grid Status API — ultimo SCED (5-min).")
+
+    flat_default = float(ercot_price) if (ercot_price is not None) else 0.05
+    ui_disabled = (price_source == "ERCOT RTM (Grid Status API)")
+
+    # valore iniziale mostrato nell'input (se bloccato e c'è ERCOT → mostra ERCOT)
+    init_value = float(st.session_state.get("flat_price_cached", flat_default))
+    if ui_disabled and (ercot_price is not None):
+        init_value = float(ercot_price)
+
+    flat_price = st.number_input(
+        "Flat $/kWh",
+        min_value=0.0, step=0.001,
+        value=init_value,
+        format="%.3f",
+        key="flat_price_input",
+        disabled=ui_disabled,
+    )
+
+    # se è selezionato ERCOT, forziamo il valore usato nei calcoli al live
+    if ui_disabled and (ercot_price is not None):
+        flat_price = float(ercot_price)
+
+    # aggiorna la cache per i prossimi rerun
+    st.session_state["flat_price_cached"] = float(flat_price)
+
+
+    uploaded_csv = st.file_uploader(
+        "Curva oraria opzionale CSV (colonna 'price_usd_per_kwh')", type=["csv"]
+    )
     price_curve = None
     if uploaded_csv is not None:
         try:
@@ -711,6 +828,7 @@ with st.sidebar:
                 st.error("CSV must include a 'price_usd_per_kwh' column.")
         except Exception as e:
             st.error(f"Failed to read CSV: {e}")
+
 
 # -----------------------------
 # Catalog editor
@@ -835,6 +953,9 @@ if mode == "Classica":
             with tabs[idx]:
                 btc_price = scn.btc_price_override or live_btc_price
                 fees_block = scn.avg_fees_per_block_btc_override if scn.avg_fees_per_block_btc_override is not None else live_avg_fees
+                use_live_ercot = (price_source == "ERCOT RTM (Grid Status API)") and (ercot_price is not None)
+                energy_flat_for_sim = ercot_price if use_live_ercot else scn.variable_energy_usd_per_kwh
+
 
                 df = simulate_scenario(
                     scn,
@@ -842,7 +963,7 @@ if mode == "Classica":
                     network_ths_start=live_network_ths,
                     avg_fees_btc=fees_block,
                     btc_price_usd_start=btc_price,
-                    flat_price_usd_per_kwh=scn.variable_energy_usd_per_kwh,
+                    flat_price_usd_per_kwh=energy_flat_for_sim, 
                     price_curve_usd_per_kwh=price_curve,
                     halving_date=halving_date_input,
                     subsidy_before=subsidy_before,
