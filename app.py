@@ -762,7 +762,6 @@ with st.sidebar:
                 "⚠️ Nessuna API key trovata. Aggiungi `GRIDSTATUS_API_KEY` in `.streamlit/secrets.toml` "
                 "oppure come variabile d'ambiente per usare l’ERCOT RTM."
             )
-            ercot_price = None  # esplicito
         else:
             location = st.selectbox(
                 "Preset location",
@@ -770,13 +769,14 @@ with st.sidebar:
                 "NORTH_HUB","SOUTH_HUB","WEST_HUB","HOUSTON_HUB",
                 "HB_HOUSTON","HB_NORTH","HB_SOUTH","HB_WEST"],
                 index=0,
-                key="ercot_location"  # <<< chiave univoca
+                key="ercot_location"
             )
             with st.spinner("Recupero prezzo ERCOT RTM…"):
                 ercot_price = fetch_ercot_rtm_price_per_kwh_api(GRIDSTATUS_API_KEY, location)
 
             st.metric("ERCOT RTM (live) $/kWh", f"{ercot_price:.5f}" if ercot_price is not None else "—")
             st.caption("Fonte: Grid Status API — ultimo SCED (5-min).")
+
 
         location = st.selectbox(
             "Preset location",
