@@ -786,7 +786,7 @@ with st.sidebar:
             index=0
         )
         with st.spinner("Recupero prezzo ERCOT RTM…"):
-            ercot_price = fetch_ercot_rtm_price_per_kwh_api(api_key, location)
+            ercot_price = fetch_ercot_rtm_price_per_kwh_api(GRIDSTATUS_API_KEY, location)
 
         st.metric("ERCOT RTM (live) $/kWh", f"{ercot_price:.5f}" if ercot_price is not None else "—")
         st.caption("Fonte: Grid Status API — ultimo SCED (5-min).")
