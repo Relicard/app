@@ -126,51 +126,52 @@ def fetch_block_reward_btc() -> Optional[float]:
         return max(reward, 0.0)
 
 # --- Average Fees 7d (mempool.space) ---
-@st.cache_data(ttl=900)
-def fetch_avg_fees_per_block_btc_7d(max_blocks: int = 1200) -> Optional[float]:
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_avg_fees_per_block_btc_7d_latest() -> Optional[float]:
+    """
+    Prende l'ULTIMO campione della serie 1w da mempool.space:
+    GET /api/v1/mining/blocks/fees/1w
+    Usa 'avgFees' (in sats) -> BTC (8 decimali).
+    """
     try:
-        url = "https://mempool.space/api/v1/blocks-extras"
+        url = "https://mempool.space/api/v1/mining/blocks/fees/1w"
         r = requests.get(url, timeout=15, headers=HEADERS)
         r.raise_for_status()
-        page = r.json()
-        if not isinstance(page, list) or not page:
+        data = r.json()
+        if not isinstance(data, list) or not data:
             return None
-
-        now = int(time.time())
-        threshold = now - 7 * 24 * 3600
-
-        fees_btc: List[float] = []
-
-        def collect_from(page_list):
-            for b in page_list:
-                ts = int(b.get("timestamp") or b.get("time") or 0)
-                if ts <= 0:
-                    continue
-                extras = b.get("extras") if isinstance(b.get("extras"), dict) else {}
-                sats = extras.get("totalFees") or b.get("totalFees")
-                if sats is not None:
-                    fees_btc.append(float(sats) / 1e8)  # sats -> BTC
-
-        collect_from(page)
-        next_height = int(page[-1].get("height", page[0].get("height"))) - 1
-
-        while len(fees_btc) < max_blocks and next_height > 0:
-            r = requests.get(f"https://mempool.space/api/v1/blocks-extras/{next_height}", timeout=15, headers=HEADERS)
-            r.raise_for_status()
-            page = r.json()
-            if not isinstance(page, list) or not page:
-                break
-            oldest_ts = int(page[-1].get("timestamp") or page[-1].get("time") or 0)
-            collect_from(page)
-            if oldest_ts and oldest_ts < threshold:
-                break
-            next_height = int(page[-1].get("height", next_height)) - 1
-
-        if not fees_btc:
+        last = data[-1]                       # ultimo campione (più recente)
+        sats = last.get("avgFees", None)
+        if sats is None:
             return None
-        return float(np.mean(fees_btc))
+        return float(sats) / 1e8              # sats -> BTC
     except Exception:
         return None
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_avg_fees_last_n_blocks_btc(n: int = 1000) -> Optional[tuple[float, int, int]]:
+    """
+    Media delle fee per blocco (in BTC) sugli ultimi n blocchi.
+    Usa: GET /api/v1/mining/reward-stats/:blockCount
+    Ritorna (avg_btc_per_block, start_block, end_block) oppure None.
+    """
+    try:
+        url = f"https://mempool.space/api/v1/mining/reward-stats/{n}"
+        r = requests.get(url, timeout=15, headers=HEADERS)
+        r.raise_for_status()
+        data = r.json()
+        total_fee_sats = int(data.get("totalFee", "0"))  # string -> int sats
+        if total_fee_sats <= 0:
+            return None
+        avg_sats = total_fee_sats / float(n)
+        avg_btc = avg_sats / 1e8
+        start_block = int(data.get("startBlock", 0))
+        end_block   = int(data.get("endBlock", 0))
+        return avg_btc, start_block, end_block
+    except Exception:
+        return None
+
+
     
 @st.cache_data(ttl=60)
 def fetch_ercot_rtm_price_per_kwh_api(
@@ -714,10 +715,18 @@ st.caption("Model mining economics, compare scenarios, schedule future steps and
 top_cols = st.columns([1,1,2])
 mode = top_cols[0].radio("Mode", ["Classica", "Prossimi Step"], index=0, horizontal=True)
 
-# Halving controls (solo data visibile; subsidy fisse dietro le quinte)
+# Halving controls (data stimata in base all'altezza attuale → 10 min/blocco)
 with top_cols[1]:
     st.write("Halving (3.125 → 1.5625 BTC)")
-    halving_date_input = st.date_input("Data halving", value=date(2028,4,11))
+
+    HALVING_HEIGHT = 1_050_000
+    curr_height_for_halving = fetch_block_height()  
+    if curr_height_for_halving is not None:
+        blocks_left = max(0, HALVING_HEIGHT - curr_height_for_halving)
+        est_halving_dt_utc = datetime.utcnow() + timedelta(minutes=blocks_left * 10)
+        default_halving_date = est_halving_dt_utc.date()
+
+    halving_date_input = st.date_input("Data halving", value=default_halving_date)
     subsidy_before = 3.125
     subsidy_after  = 1.5625
 
@@ -729,16 +738,21 @@ with st.sidebar:
         diff = fetch_difficulty()
         height = fetch_block_height()
         live_subsidy_now = fetch_block_reward_btc()
-        avg_fees = fetch_avg_fees_per_block_btc_7d()  # 7d average, can be None
+        avg_fees = fetch_avg_fees_per_block_btc_7d_latest()
+        avg_fees_1k = fetch_avg_fees_last_n_blocks_btc(1000)
         net_ths = difficulty_to_network_hashrate_ths(diff) if diff else float("nan")
 
     col1, col2 = st.columns(2)
     with col1:
         st.metric("BTC Spot (USD)", f"{price_usd:,.0f}" if price_usd==price_usd else "—")
         st.metric("Block Reward (BTC, now)", f"{live_subsidy_now:.3f}" if live_subsidy_now else "—")
-        st.metric("Avg Fees / Block (BTC, 7d)", f"{avg_fees:.4f}" if (avg_fees is not None) else "(set below)")
-        if avg_fees is not None:
-            st.caption(f"≈ {avg_fees*1e8:,.0f} sats per block (7d)")
+        if avg_fees_1k is not None:
+            avg_1k_btc, start_b, end_b = avg_fees_1k
+            st.metric("Avg Fees / Block (BTC, last 7d)", f"{avg_1k_btc:.8f}")
+        else:
+            st.metric("Avg Fees / Block (BTC, last 7d)", "—")
+            st.caption("N/D — impossibile calcolare la media ultimi 1000 blocchi")
+
     with col2:
         st.metric("Height", f"{height:,}" if height else "—")
         st.metric("Difficulty", f"{diff:,.0f}" if diff else "—")
@@ -752,7 +766,7 @@ with st.sidebar:
         ["Flat", "ERCOT RTM (Grid Status API)"],
         index=0, horizontal=True, key="price_source",
     )
-
+    
     ercot_price = None
     if price_source == "ERCOT RTM (Grid Status API)":
         GRIDSTATUS_API_KEY = st.secrets.get("GRIDSTATUS_API_KEY", os.getenv("GRIDSTATUS_API_KEY"))
@@ -897,7 +911,16 @@ if mode == "Classica":
         capex_transformer = c5.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0)
         other_capex = c6.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0)
         btc_price_override = c7.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0)
-        avg_fees_override = c8.number_input("Avg fees per block BTC (0 = live/none)", min_value=0.0, step=0.01, value=0.2)
+        default_avg_fees_btc = float(avg_fees_1k[0]) if avg_fees_1k is not None else float(avg_fees or 0.0)
+
+        avg_fees_override = c8.number_input(
+            "Avg fees per block BTC (valore live)",
+            min_value=0.0,
+            step=0.00000001,
+            value=default_avg_fees_btc,
+            format="%.8f",
+            key="avg_fees_override_classic",
+        )
 
         c9, c10, c11 = st.columns(3)
         monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1)
@@ -1079,7 +1102,16 @@ else:
         capex_transformer = c5.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0, key="trf_ns")
         other_capex = c6.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0, key="oth_ns")
         btc_price_override = c7.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0, key="btc_ns")
-        avg_fees_override = c8.number_input("Avg fees per block BTC (0 = live/none)", min_value=0.0, step=0.01, value=0.2, key="fee_ns")
+        default_avg_fees_btc = float(avg_fees_1k[0]) if avg_fees_1k is not None else float(avg_fees or 0.0)
+
+        avg_fees_override = c8.number_input(
+            "Avg fees per block BTC (valore live)",
+            min_value=0.0,
+            step=0.00000001,
+            value=default_avg_fees_btc,
+            format="%.8f",
+            key="avg_fees_override_classic",
+        )
 
         c9, c10, c11 = st.columns(3)
         monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_ns")
