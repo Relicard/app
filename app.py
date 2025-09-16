@@ -777,20 +777,6 @@ with st.sidebar:
             st.metric("ERCOT RTM (live) $/kWh", f"{ercot_price:.5f}" if ercot_price is not None else "—")
             st.caption("Fonte: Grid Status API — ultimo SCED (5-min).")
 
-
-        location = st.selectbox(
-            "Preset location",
-            ["PIONR_DJ_RN","LZ_WEST","LZ_NORTH","LZ_SOUTH","LZ_HOUSTON",
-             "NORTH_HUB","SOUTH_HUB","WEST_HUB","HOUSTON_HUB",
-             "HB_HOUSTON","HB_NORTH","HB_SOUTH","HB_WEST"],
-            index=0
-        )
-        with st.spinner("Recupero prezzo ERCOT RTM…"):
-            ercot_price = fetch_ercot_rtm_price_per_kwh_api(GRIDSTATUS_API_KEY, location)
-
-        st.metric("ERCOT RTM (live) $/kWh", f"{ercot_price:.5f}" if ercot_price is not None else "—")
-        st.caption("Fonte: Grid Status API — ultimo SCED (5-min).")
-
     flat_default = float(ercot_price) if (ercot_price is not None) else 0.05
     ui_disabled = (price_source == "ERCOT RTM (Grid Status API)")
 
