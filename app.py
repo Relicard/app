@@ -41,6 +41,24 @@ def save_public_scenario(kind: str, payload: dict) -> None:
     data[kind].append(payload)
     _write_all(data)
 
+def delete_public_scenario(kind: str, index: int) -> bool:
+    """Elimina lo scenario pubblico di tipo `kind` all'indice `index`.
+    Ritorna True se eliminato, False se indice fuori range."""
+    data = _read_all()
+    arr = data.get(kind, [])
+    if 0 <= index < len(arr):
+        del arr[index]
+        data[kind] = arr
+        _write_all(data)
+        return True
+    return False
+
+def clear_public_scenarios(kind: str) -> None:
+    """Cancella tutti gli scenari pubblici di quel tipo."""
+    data = _read_all()
+    data[kind] = []
+    _write_all(data)
+
 def list_public_scenarios(kind: str) -> list[dict]:
     data = _read_all()
     return data.get(kind, [])
@@ -728,14 +746,14 @@ def simulate_hosting_scenario(
     subsidy_after: float,
 ) -> pd.DataFrame:
     """
-    Hosting:
+    Restituisce un DF mensile con:
       - Ricavo energia: hosting_sell * kWh
       - Costo energia: our_cost * kWh
-      - Margine energia = (hosting_sell - our_cost) * kWh
-      - Commissione mining: % su revenue mining del cliente (in USD)
-      - Markup ASIC (one-off @ t0) = somma( (prezzo_vendita - prezzo_acquisto) * units )
-      - **Niente** revenue da nostro mining diretto.
-      - Cashflow @ t0 = EBITDA @ t0 - **Infra CAPEX** + **ASIC Markup** (nessun -costo ASIC: è pass-through)
+      - Margine energia: (hosting_sell - our_cost) * kWh
+      - Commissione mining: % su revenue mining cliente (in USD)
+      - Markup ASIC (one-off al mese 0): sum( (sale_price - buy_price) * units )
+      - EBITDA: margine energia + commissione - OPEX fissi
+      - Cashflow: EBITDA - CAPEX + markup_oneoff (solo mese 0)
     """
     uptime = scn.uptime_pct / 100.0
     months = make_month_index(scn.months_horizon)
@@ -751,47 +769,52 @@ def simulate_hosting_scenario(
     fleet_ths = scn.total_hashrate_ths(catalog)
     it_power_kw = scn.total_power_kw(catalog)
 
-    # ---- Pass-through ASIC: calcolo acquisto, vendita, markup (one-off @ t0)
-    asic_buy_cost_usd = 0.0
-    asic_sale_revenue_usd = 0.0
+    # Calcolo markup ASIC one-off (al mese 0)
+    def _buy_cost_unit(m: str) -> float:
+        return float(catalog[m].unit_price_usd)
+    asic_markup_usd = 0.0
     for m, units in scn.fleet.items():
         if m in catalog and units > 0:
-            buy = float(catalog[m].unit_price_usd)
-            sell = float(scn.sale_price_overrides.get(m, buy))
-            asic_buy_cost_usd   += buy  * float(units)
-            asic_sale_revenue_usd += sell * float(units)
-    asic_markup_usd = float(max(asic_sale_revenue_usd - asic_buy_cost_usd, 0.0))
+            sell = float(scn.sale_price_overrides.get(m, catalog[m].unit_price_usd))
+            buy = _buy_cost_unit(m)
+            asic_markup_usd += max(sell - buy, 0.0) * float(units)
+    asic_markup_usd = float(asic_markup_usd)
 
-    # ---- CAPEX infrastrutturale (questo è VERO CAPEX)
-    infra_capex_usd = float(scn.capex_container_usd + scn.capex_transformer_usd + scn.other_capex_usd)
+    # CAPEX totale (incluso costo acquisto ASIC)
+    total_capex = scn.total_capex_usd(catalog)
 
     rows = []
     for month_idx, month_start in enumerate(months):
         dim = days_in_month(month_start)
         hours = 24 * dim
 
-        # Curve energia (se nulla, usa flat)
+        # Curva prezzo energia: se non fornita, usa flat "our_energy_usd_per_kwh"
         price_curve_our = build_price_curve_for_month(hours, scn.our_energy_usd_per_kwh, price_curve_usd_per_kwh)
         price_curve_sell = build_price_curve_for_month(hours, scn.hosting_sell_usd_per_kwh, price_curve_usd_per_kwh)
 
-        # kWh = IT kW * PUE * ore * uptime
+        # kWh consumati (IT × PUE × ore × uptime)
         effective_kw = it_power_kw * scn.pue
-        kwh_month = effective_kw * hours * uptime
+        kwh_month = effective_kw * float(np.sum(np.ones(hours))) * uptime  # = effective_kw * hours * uptime
 
-        # Ricavi/costi energetici (integrazione delle curve)
+        # Ricavi/Costi energetici
+        # NOTA: dato che i prezzi possono essere orari, calcoliamo integrale con le curve.
+        # resa equivalente: somma(curva)*effective_kw*uptime
         rev_energy = float(effective_kw * float(np.sum(price_curve_sell)) * uptime)
         cost_energy = float(effective_kw * float(np.sum(price_curve_our)) * uptime)
         margin_energy = float(rev_energy - cost_energy)
 
-        # Commissione su mining cliente
+        # Commissione su mining cliente (usiamo stessa formula della produzione, ma a noi entra solo la %)
         subsidy_m = monthly_block_reward_btc(month_start, halving_date, subsidy_before, subsidy_after)
         btc_day_client = expected_btc_per_day(fleet_ths, nh_ths, subsidy_m, fees_block or 0.0, uptime)
         btc_month_client = btc_day_client * dim
         mining_rev_client_usd = float(btc_month_client * price_usd)
         commission_usd = float(mining_rev_client_usd * (scn.commission_hashrate_pct / 100.0))
 
-        # EBITDA mensile hosting
+        # EBITDA hosting (margine energia + commissione - opex fissi)
         ebitda = margin_energy + commission_usd - scn.fixed_opex_month_usd
+
+        # Ricavi mensili “contabili” (solo per reporting): energia venduta + commissione (senza markup ASIC)
+        rev_month_total = rev_energy + commission_usd
 
         rows.append({
             "month": month_start.strftime("%Y-%m"),
@@ -809,45 +832,38 @@ def simulate_hosting_scenario(
             "energy_margin_usd": margin_energy,
             "commission_usd": commission_usd,
 
-            # Reportistica
-            "rev_usd": rev_energy + commission_usd,
+            # Totali di periodo
+            "rev_usd": rev_month_total,              # (energia venduta + commissione) — utile per grafici
             "fixed_opex_usd": scn.fixed_opex_month_usd,
             "ebitda_usd": ebitda,
 
-            # Markup ASIC: valorizzato SOLO al mese 0 più sotto
+            # Markup ASIC visibile solo al mese 0 (riempiamo sotto)
             "asic_markup_usd": 0.0,
         })
 
-        # Aggiorna traiettorie
+        # Aggiornamento traiettorie
         nh_ths *= (1.0 + nh_growth)
         price_usd = (price_usd * (1.0 + price_growth)) if (scn.btc_price_override is None) else scn.btc_price_override
 
     df = pd.DataFrame(rows)
 
-    # One-off @ t0
+    # Markup ASIC solo al mese 0
     if len(df) > 0:
         df.loc[df.index[0], "asic_markup_usd"] = asic_markup_usd
 
-    # ---- Cashflow:
-    # mese 0: EBITDA0 - Infra CAPEX + ASIC Markup
-    # mesi successivi: EBITDA
-    df["cashflow_usd"] = df["ebitda_usd"].astype(float)
+    # Cashflow: EBITDA - CAPEX (al mese 0) + markup_oneoff (mese 0)
+    df["cashflow_usd"] = df["ebitda_usd"]
     if len(df) > 0:
-        df.loc[df.index[0], "cashflow_usd"] = df.loc[df.index[0], "cashflow_usd"] - infra_capex_usd + asic_markup_usd
+        df.loc[df.index[0], "cashflow_usd"] = df.loc[df.index[0], "cashflow_usd"] - total_capex + asic_markup_usd
     df["cum_cashflow_usd"] = df["cashflow_usd"].cumsum()
 
-    # Payback & attributi
+    # Payback
     payback_idx = df.index[df["cum_cashflow_usd"] >= 0]
     df.attrs["payback_months"] = int(payback_idx[0] + 1) if len(payback_idx) else None
-
-    # Nota: per chiarezza esponiamo i 3 numeri separati
-    df.attrs["infra_capex_usd"] = infra_capex_usd             # CAPEX vero
-    df.attrs["asic_buy_cost_usd"] = asic_buy_cost_usd         # pass-through (non sottratto in cashflow)
-    df.attrs["asic_sale_revenue_usd"] = asic_sale_revenue_usd # pass-through (non sommato in cashflow)
-    df.attrs["asic_markup_usd"] = asic_markup_usd             # ricavo one-off che entra nel cashflow
+    df.attrs["total_capex_usd"] = total_capex
     df.attrs["fleet_ths"] = fleet_ths
     df.attrs["it_power_kw"] = it_power_kw
-
+    df.attrs["asic_markup_usd"] = asic_markup_usd
     return df
 
 
@@ -1334,7 +1350,26 @@ if mode == "Classica":
             if not pub:
                 st.caption("Nessuno scenario pubblico salvato.")
             else:
-                st.dataframe(pd.DataFrame(pub))
+                df_pub = pd.DataFrame(pub)
+                st.dataframe(df_pub)
+
+                # bottone per cancellare tutto
+                if st.button("❌ Elimina tutti gli scenari pubblici (Classica)"):
+                    clear_public_scenarios("classica")
+                    st.success("Scenari pubblici (Classica) eliminati.")
+                    st.rerun()
+
+                # dropdown per cancellare singolo scenario
+                idx_to_delete = st.selectbox(
+                    "Seleziona scenario da eliminare",
+                    options=list(range(len(pub))),
+                    format_func=lambda i: f"{i} — {pub[i].get('name','?')}",
+                    key="del_classica"
+                )
+                if st.button("Elimina scenario selezionato (Classica)"):
+                    if delete_public_scenario("classica", idx_to_delete):
+                        st.success("Scenario eliminato.")
+                        st.rerun()
 
 # -----------------------------
 # Modalità Prossimi Step
@@ -1623,11 +1658,31 @@ elif mode == "Prossimi Step":
                 st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
 
         with st.expander("📚 Scenari pubblici (Prossimi Step)"):
-            pub = list_public_scenarios("prossimi_step")
+            pub = list_public_scenarios("Prossimi Step")
             if not pub:
                 st.caption("Nessuno scenario pubblico salvato.")
             else:
-                st.dataframe(pd.DataFrame(pub))
+                df_pub = pd.DataFrame(pub)
+                st.dataframe(df_pub)
+
+                # bottone per cancellare tutto
+                if st.button("❌ Elimina tutti gli scenari pubblici (Prossimi Step)"):
+                    clear_public_scenarios("Prossimi Step")
+                    st.success("Scenari pubblici (Prossimi Step) eliminati.")
+                    st.rerun()
+
+                # dropdown per cancellare singolo scenario
+                idx_to_delete = st.selectbox(
+                    "Seleziona scenario da eliminare",
+                    options=list(range(len(pub))),
+                    format_func=lambda i: f"{i} — {pub[i].get('name','?')}",
+                    key="del_Prossimi Step"
+                )
+                if st.button("Elimina scenario selezionato (Prossimi Step)"):
+                    if delete_public_scenario("Prossimi Step", idx_to_delete):
+                        st.success("Scenario eliminato.")
+                        st.rerun()
+
 
 # -----------------------------
 # Modalità Hosting
@@ -1777,13 +1832,8 @@ elif mode == "Hosting":
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("Fleet TH/s (ospitata)", f"{dfh.attrs['fleet_ths']:,.0f}")
                 k2.metric("IT Power kW", f"{dfh.attrs['it_power_kw']:,.0f}")
-                k3.metric("Infra CAPEX", f"${dfh.attrs['infra_capex_usd']:,.0f}")
+                k3.metric("Total CAPEX", f"${dfh.attrs['total_capex_usd']:,.0f}")
                 k4.metric("Payback (months)", dfh.attrs["payback_months"] if dfh.attrs["payback_months"] else "—")
-
-                c1, c2, c3 = st.columns(3)
-                c1.metric("ASIC buy (pass-through)", f"${dfh.attrs['asic_buy_cost_usd']:,.0f}")
-                c2.metric("ASIC sale (pass-through)", f"${dfh.attrs['asic_sale_revenue_usd']:,.0f}")
-                c3.metric("ASIC Markup (one-off @ t0)", f"${dfh.attrs['asic_markup_usd']:,.0f}")
 
                 # Evidenzia il one-off markup
                 st.metric("ASIC Markup (one-off @ t0)", f"${dfh.attrs['asic_markup_usd']:,.0f}")
@@ -1848,10 +1898,30 @@ elif mode == "Hosting":
                 nameb = best.iloc[0]["Scenario"]
                 st.success(f"🏆 Best 36m cumulative cashflow (Hosting): **{nameb}**")
         with st.expander("📚 Scenari pubblici (Hosting)"):
-            pub = list_public_scenarios("hosting")
+            pub = list_public_scenarios("Hosting")
             if not pub:
                 st.caption("Nessuno scenario pubblico salvato.")
             else:
-                st.dataframe(pd.DataFrame(pub))
+                df_pub = pd.DataFrame(pub)
+                st.dataframe(df_pub)
+
+                # bottone per cancellare tutto
+                if st.button("❌ Elimina tutti gli scenari pubblici (Hosting)"):
+                    clear_public_scenarios("Hosting")
+                    st.success("Scenari pubblici (Hosting) eliminati.")
+                    st.rerun()
+
+                # dropdown per cancellare singolo scenario
+                idx_to_delete = st.selectbox(
+                    "Seleziona scenario da eliminare",
+                    options=list(range(len(pub))),
+                    format_func=lambda i: f"{i} — {pub[i].get('name','?')}",
+                    key="del_Hosting"
+                )
+                if st.button("Elimina scenario selezionato (Hosting)"):
+                    if delete_public_scenario("Hosting", idx_to_delete):
+                        st.success("Scenario eliminato.")
+                        st.rerun()
+
 
 st.divider()
