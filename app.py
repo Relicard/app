@@ -1784,7 +1784,7 @@ elif mode == "Hosting":
 
         c5, c6 = st.columns(2)
         other_capex = c5.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0, key="capexo_host")
-        commission_pct = c6.number_input("Commissione mining % su revenue cliente", min_value=0.0, max_value=100.0, step=0.5, value=10.0, key="comm_host")
+        commission_pct = c6.number_input("Commissione mining % su revenue cliente", min_value=0.0, max_value=100.0, step=0.5, value=1.0, key="comm_host")
 
         st.markdown("**Assunzioni finanziarie**")
         f1, f2, f3 = st.columns(3)
