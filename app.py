@@ -1232,11 +1232,11 @@ if mode == "Classica":
         st.session_state.scenarios.append(scn)
         st.success(f"Added {scn.name} ✅")
 
-    if public_box:
-        author = author_name.strip() or "anonymous"
-        payload = scenario_to_public_dict(scn, catalog, author=author)
-        save_public_scenario("classica", payload)
-        st.success("Scenario pubblicato ✅")
+        if public_box:
+            author = author_name.strip() or "anonymous"
+            payload = scenario_to_public_dict(scn, catalog, author=author)
+            save_public_scenario("classica", payload)
+            st.success("Scenario pubblicato ✅")
 
     if not st.session_state.scenarios:
         st.info("Add one or more scenarios to begin.")
@@ -1438,11 +1438,11 @@ elif mode == "Prossimi Step":
         st.session_state.scenarios_ns.append(scn)
         st.success(f"Added {scn.name} ✅")
 
-    if public_box_ns:
-        author = author_name_ns.strip() or "anonymous"
-        payload = scenario_to_public_dict(scn, catalog, author=author)
-        save_public_scenario("prossimi_step", payload)
-        st.success("Scenario t0 pubblicato ✅")
+        if public_box_ns:
+            author = author_name_ns.strip() or "anonymous"
+            payload = scenario_to_public_dict(scn, catalog, author=author)
+            save_public_scenario("prossimi_step", payload)
+            st.success("Scenario t0 pubblicato ✅")
 
     if not st.session_state.scenarios_ns:
         st.info("Aggiungi almeno uno scenario base t0 per definire i *Prossimi Step* qui sotto.")
@@ -1534,9 +1534,9 @@ elif mode == "Prossimi Step":
             st.session_state.future_steps.append(step)
             st.success(f"Added step: {step.name} ✅")
 
-        if st.checkbox("Pubblica anche questo Step", value=False, key=f"pub_step_{target_scn}_{month_offset}"):
-            save_public_scenario("prossimi_step", step_to_public_dict(step))
-            st.success("Step pubblicato ✅")
+            if st.checkbox("Pubblica anche questo Step", value=False, key=f"pub_step_{target_scn}_{month_offset}"):
+                save_public_scenario("prossimi_step", step_to_public_dict(step))
+                st.success("Step pubblicato ✅")
 
         # Show per-scenario tabs with steps
         tabs = st.tabs([s.name for s in st.session_state.scenarios_ns] + ["📊 Compare"])
@@ -1698,6 +1698,8 @@ elif mode == "Hosting":
         default_avg_fees_btc = float((avg_fees if avg_fees is not None else 0.0))
         avg_fees_override = f2.number_input("Avg fees per block BTC", min_value=0.0, step=0.00000001, value=default_avg_fees_btc, format="%.8f", key="fees_host")
         months_horizon = int(f3.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6, key="hor_host"))
+        public_box_host = st.checkbox("Salva scenario Hosting come pubblico", value=False, key="save_public_host")
+        author_name_host = st.text_input("Autore (facoltativo)", value="", key="author_host")
 
         g1, g2 = st.columns(2)
         monthly_net_growth = g1.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_host")
@@ -1736,6 +1738,12 @@ elif mode == "Hosting":
         )
         st.session_state.hosting_scenarios.append(scn_h)
         st.success(f"Added {scn_h.name} ✅")
+
+        if public_box_host:
+            author = author_name_host.strip() or "anonymous"
+            payload = hosting_to_public_dict(scn_h, author=author)
+            save_public_scenario("hosting", payload)
+            st.success("Scenario Hosting pubblicato ✅")
 
     if not st.session_state.hosting_scenarios:
         st.info("Aggiungi almeno uno scenario Hosting.")
@@ -1834,6 +1842,11 @@ elif mode == "Hosting":
             if not best.empty:
                 nameb = best.iloc[0]["Scenario"]
                 st.success(f"🏆 Best 36m cumulative cashflow (Hosting): **{nameb}**")
-
+        with st.expander("📚 Scenari pubblici (Hosting)"):
+            pub = list_public_scenarios("hosting")
+            if not pub:
+                st.caption("Nessuno scenario pubblico salvato.")
+            else:
+                st.dataframe(pd.DataFrame(pub))
 
 st.divider()
