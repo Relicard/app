@@ -1329,12 +1329,12 @@ if mode == "Classica":
                 nameb = best.iloc[0]["Scenario"]
                 st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
 
-            with st.expander("📚 Scenari pubblici (Classica)"):
-                pub = list_public_scenarios("classica")
-                if not pub:
-                    st.caption("Nessuno scenario pubblico salvato.")
-                else:
-                    st.dataframe(pd.DataFrame(pub))
+        with st.expander("📚 Scenari pubblici (Classica)"):
+            pub = list_public_scenarios("classica")
+            if not pub:
+                st.caption("Nessuno scenario pubblico salvato.")
+            else:
+                st.dataframe(pd.DataFrame(pub))
 
 # -----------------------------
 # Modalità Prossimi Step
@@ -1412,6 +1412,8 @@ elif mode == "Prossimi Step":
         monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_ns")
         btc_price_mom = c10.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1, key="prg_ns")
         months_horizon = int(c11.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6, key="hor_ns"))
+        public_box_ns = st.checkbox("Salva base scenario t0 come pubblico", value=False, key="save_public_ns")
+        author_name_ns = st.text_input("Autore (facoltativo)", value="", key="author_ns")
 
         submitted = st.form_submit_button("➕ Add base scenario (t0)")
 
@@ -1435,6 +1437,12 @@ elif mode == "Prossimi Step":
         )
         st.session_state.scenarios_ns.append(scn)
         st.success(f"Added {scn.name} ✅")
+
+    if public_box_ns:
+        author = author_name_ns.strip() or "anonymous"
+        payload = scenario_to_public_dict(scn, catalog, author=author)
+        save_public_scenario("prossimi_step", payload)
+        st.success("Scenario t0 pubblicato ✅")
 
     if not st.session_state.scenarios_ns:
         st.info("Aggiungi almeno uno scenario base t0 per definire i *Prossimi Step* qui sotto.")
@@ -1526,6 +1534,10 @@ elif mode == "Prossimi Step":
             st.session_state.future_steps.append(step)
             st.success(f"Added step: {step.name} ✅")
 
+        if st.checkbox("Pubblica anche questo Step", value=False, key=f"pub_step_{target_scn}_{month_offset}"):
+            save_public_scenario("prossimi_step", step_to_public_dict(step))
+            st.success("Step pubblicato ✅")
+
         # Show per-scenario tabs with steps
         tabs = st.tabs([s.name for s in st.session_state.scenarios_ns] + ["📊 Compare"])
         dfs = []
@@ -1609,6 +1621,13 @@ elif mode == "Prossimi Step":
             if not best.empty:
                 nameb = best.iloc[0]["Scenario"]
                 st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
+
+        with st.expander("📚 Scenari pubblici (Prossimi Step)"):
+            pub = list_public_scenarios("prossimi_step")
+            if not pub:
+                st.caption("Nessuno scenario pubblico salvato.")
+            else:
+                st.dataframe(pd.DataFrame(pub))
 
 # -----------------------------
 # Modalità Hosting
