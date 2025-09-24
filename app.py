@@ -728,16 +728,14 @@ def simulate_hosting_scenario(
     subsidy_after: float,
 ) -> pd.DataFrame:
     """
-    Restituisce un DF mensile con:
+    Hosting:
       - Ricavo energia: hosting_sell * kWh
       - Costo energia: our_cost * kWh
-      - Margine energia: (hosting_sell - our_cost) * kWh
-      - Commissione mining: % su revenue mining cliente (in USD)
-      - Markup ASIC (one-off al mese 0): sum( (sale_price - buy_price) * units )
-      - EBITDA: margine energia + commissione - OPEX fissi
-      - Cashflow: EBITDA - CAPEX + markup_oneoff (solo mese 0)
-
-    NOTA: niente revenue da mining diretto nostro; solo commissioni.
+      - Margine energia = (hosting_sell - our_cost) * kWh
+      - Commissione mining: % su revenue mining del cliente (in USD)
+      - Markup ASIC (one-off @ t0) = somma( (prezzo_vendita - prezzo_acquisto) * units )
+      - **Niente** revenue da nostro mining diretto.
+      - Cashflow @ t0 = EBITDA @ t0 - **Infra CAPEX** + **ASIC Markup** (nessun -costo ASIC: è pass-through)
     """
     uptime = scn.uptime_pct / 100.0
     months = make_month_index(scn.months_horizon)
@@ -753,52 +751,47 @@ def simulate_hosting_scenario(
     fleet_ths = scn.total_hashrate_ths(catalog)
     it_power_kw = scn.total_power_kw(catalog)
 
-    # Calcolo markup ASIC one-off (al mese 0)
-    def _buy_cost_unit(m: str) -> float:
-        return float(catalog[m].unit_price_usd)
-    asic_markup_usd = 0.0
+    # ---- Pass-through ASIC: calcolo acquisto, vendita, markup (one-off @ t0)
+    asic_buy_cost_usd = 0.0
+    asic_sale_revenue_usd = 0.0
     for m, units in scn.fleet.items():
         if m in catalog and units > 0:
-            sell = float(scn.sale_price_overrides.get(m, catalog[m].unit_price_usd))
-            buy = _buy_cost_unit(m)
-            asic_markup_usd += max(sell - buy, 0.0) * float(units)
-    asic_markup_usd = float(asic_markup_usd)
+            buy = float(catalog[m].unit_price_usd)
+            sell = float(scn.sale_price_overrides.get(m, buy))
+            asic_buy_cost_usd   += buy  * float(units)
+            asic_sale_revenue_usd += sell * float(units)
+    asic_markup_usd = float(max(asic_sale_revenue_usd - asic_buy_cost_usd, 0.0))
 
-    # CAPEX totale (incluso costo acquisto ASIC)
-    total_capex = scn.total_capex_usd(catalog)
+    # ---- CAPEX infrastrutturale (questo è VERO CAPEX)
+    infra_capex_usd = float(scn.capex_container_usd + scn.capex_transformer_usd + scn.other_capex_usd)
 
     rows = []
     for month_idx, month_start in enumerate(months):
         dim = days_in_month(month_start)
         hours = 24 * dim
 
-        # Curva prezzo energia: se non fornita, usa flat "our_energy_usd_per_kwh"
+        # Curve energia (se nulla, usa flat)
         price_curve_our = build_price_curve_for_month(hours, scn.our_energy_usd_per_kwh, price_curve_usd_per_kwh)
         price_curve_sell = build_price_curve_for_month(hours, scn.hosting_sell_usd_per_kwh, price_curve_usd_per_kwh)
 
-        # kWh consumati (IT × PUE × ore × uptime)
+        # kWh = IT kW * PUE * ore * uptime
         effective_kw = it_power_kw * scn.pue
-        kwh_month = effective_kw * float(np.sum(np.ones(hours))) * uptime  # = effective_kw * hours * uptime
+        kwh_month = effective_kw * hours * uptime
 
-        # Ricavi/Costi energetici
-        # NOTA: dato che i prezzi possono essere orari, calcoliamo integrale con le curve.
-        # resa equivalente: somma(curva)*effective_kw*uptime
+        # Ricavi/costi energetici (integrazione delle curve)
         rev_energy = float(effective_kw * float(np.sum(price_curve_sell)) * uptime)
         cost_energy = float(effective_kw * float(np.sum(price_curve_our)) * uptime)
         margin_energy = float(rev_energy - cost_energy)
 
-        # Commissione su mining cliente (usiamo stessa formula della produzione, ma a noi entra solo la %)
+        # Commissione su mining cliente
         subsidy_m = monthly_block_reward_btc(month_start, halving_date, subsidy_before, subsidy_after)
         btc_day_client = expected_btc_per_day(fleet_ths, nh_ths, subsidy_m, fees_block or 0.0, uptime)
         btc_month_client = btc_day_client * dim
         mining_rev_client_usd = float(btc_month_client * price_usd)
         commission_usd = float(mining_rev_client_usd * (scn.commission_hashrate_pct / 100.0))
 
-        # EBITDA hosting (margine energia + commissione - opex fissi)
+        # EBITDA mensile hosting
         ebitda = margin_energy + commission_usd - scn.fixed_opex_month_usd
-
-        # Ricavi mensili “contabili” (solo per reporting): energia venduta + commissione (senza markup ASIC)
-        rev_month_total = rev_energy + commission_usd
 
         rows.append({
             "month": month_start.strftime("%Y-%m"),
@@ -816,38 +809,45 @@ def simulate_hosting_scenario(
             "energy_margin_usd": margin_energy,
             "commission_usd": commission_usd,
 
-            # Totali di periodo
-            "rev_usd": rev_month_total,              # (energia venduta + commissione) — utile per grafici
+            # Reportistica
+            "rev_usd": rev_energy + commission_usd,
             "fixed_opex_usd": scn.fixed_opex_month_usd,
             "ebitda_usd": ebitda,
 
-            # Markup ASIC visibile solo al mese 0 (riempiamo sotto)
+            # Markup ASIC: valorizzato SOLO al mese 0 più sotto
             "asic_markup_usd": 0.0,
         })
 
-        # Aggiornamento traiettorie
+        # Aggiorna traiettorie
         nh_ths *= (1.0 + nh_growth)
         price_usd = (price_usd * (1.0 + price_growth)) if (scn.btc_price_override is None) else scn.btc_price_override
 
     df = pd.DataFrame(rows)
 
-    # Markup ASIC solo al mese 0
+    # One-off @ t0
     if len(df) > 0:
         df.loc[df.index[0], "asic_markup_usd"] = asic_markup_usd
 
-    # Cashflow: EBITDA - CAPEX (al mese 0) + markup_oneoff (mese 0)
-    df["cashflow_usd"] = df["ebitda_usd"]
+    # ---- Cashflow:
+    # mese 0: EBITDA0 - Infra CAPEX + ASIC Markup
+    # mesi successivi: EBITDA
+    df["cashflow_usd"] = df["ebitda_usd"].astype(float)
     if len(df) > 0:
-        df.loc[df.index[0], "cashflow_usd"] = df.loc[df.index[0], "cashflow_usd"] - total_capex + asic_markup_usd
+        df.loc[df.index[0], "cashflow_usd"] = df.loc[df.index[0], "cashflow_usd"] - infra_capex_usd + asic_markup_usd
     df["cum_cashflow_usd"] = df["cashflow_usd"].cumsum()
 
-    # Payback
+    # Payback & attributi
     payback_idx = df.index[df["cum_cashflow_usd"] >= 0]
     df.attrs["payback_months"] = int(payback_idx[0] + 1) if len(payback_idx) else None
-    df.attrs["total_capex_usd"] = total_capex
+
+    # Nota: per chiarezza esponiamo i 3 numeri separati
+    df.attrs["infra_capex_usd"] = infra_capex_usd             # CAPEX vero
+    df.attrs["asic_buy_cost_usd"] = asic_buy_cost_usd         # pass-through (non sottratto in cashflow)
+    df.attrs["asic_sale_revenue_usd"] = asic_sale_revenue_usd # pass-through (non sommato in cashflow)
+    df.attrs["asic_markup_usd"] = asic_markup_usd             # ricavo one-off che entra nel cashflow
     df.attrs["fleet_ths"] = fleet_ths
     df.attrs["it_power_kw"] = it_power_kw
-    df.attrs["asic_markup_usd"] = asic_markup_usd
+
     return df
 
 
