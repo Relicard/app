@@ -331,6 +331,62 @@ class FutureStep:
     btc_price_monthly_growth_pct: Optional[float] = None
 
 # -----------------------------
+# Hosting dataclass
+# -----------------------------
+@dataclass
+class HostingScenario:
+    name: str
+    # Fleet hosted (units per model) — questi sono gli ASIC dei clienti
+    fleet: Dict[str, int]
+
+    # Efficienza sito
+    pue: float
+    uptime_pct: float  # %
+
+    # Costi fissi mensili (nostri)
+    fixed_opex_month_usd: float
+
+    # Prezzi energia
+    our_energy_usd_per_kwh: float      # quanto ci costa 1 kWh (come "variable_energy_usd_per_kwh")
+    hosting_sell_usd_per_kwh: float    # prezzo di vendita 1 kWh al cliente
+
+    # Prezzi ASIC (acquisto vs vendita — il surplus è ricavo one-off al mese 0)
+    # Se un modello non è in sale_price_overrides, si assume uguale al prezzo di acquisto (=> markup 0)
+    sale_price_overrides: Dict[str, float]
+
+    # CAPEX (nostri) per sito/infrastruttura (gli ASIC li compriamo e rivendiamo)
+    capex_asics_usd: float             # 0 => calcolato da catalogo (costo acquisto)
+    capex_container_usd: float
+    capex_transformer_usd: float
+    other_capex_usd: float
+
+    # Assunzioni finanziarie
+    btc_price_override: Optional[float] = None
+    avg_fees_per_block_btc_override: Optional[float] = None
+    monthly_network_growth_pct: float = 0.0
+    btc_price_monthly_growth_pct: float = 0.0
+    months_horizon: int = 36
+
+    # Commissione sul mining del cliente (es. 10% → 10.0)
+    commission_hashrate_pct: float = 0.0
+
+    # Helper: totali fleet
+    def total_hashrate_ths(self, catalog: Dict[str, AsicModel]) -> float:
+        return float(sum(catalog[m].hashrate_ths * n for m, n in self.fleet.items() if m in catalog))
+
+    def total_power_kw(self, catalog: Dict[str, AsicModel]) -> float:
+        return float(sum(catalog[m].power_kw * n for m, n in self.fleet.items() if m in catalog))
+
+    def total_capex_usd(self, catalog: Dict[str, AsicModel]) -> float:
+        # Il CAPEX ASIC è il nostro costo di acquisto (che poi “rientra” come vendita),
+        # ma ai fini PROFIT consideriamo solo il markup in “ricavi one-off”.
+        asic_capex = self.capex_asics_usd if self.capex_asics_usd > 0 else sum(
+            catalog[m].unit_price_usd * n for m, n in self.fleet.items() if m in catalog
+        )
+        return float(asic_capex + self.capex_container_usd + self.capex_transformer_usd + self.other_capex_usd)
+
+
+# -----------------------------
 # Expected production & cashflow
 # -----------------------------
 
@@ -573,6 +629,144 @@ def simulate_scenario_with_steps(
     return df
 
 # -----------------------------
+# Simulazione modalità Hosting
+# -----------------------------
+def simulate_hosting_scenario(
+    scn: HostingScenario,
+    catalog: Dict[str, AsicModel],
+    network_ths_start: float,
+    avg_fees_btc: float,
+    btc_price_usd_start: float,
+    price_curve_usd_per_kwh: Optional[np.ndarray],
+    halving_date: date,
+    subsidy_before: float,
+    subsidy_after: float,
+) -> pd.DataFrame:
+    """
+    Restituisce un DF mensile con:
+      - Ricavo energia: hosting_sell * kWh
+      - Costo energia: our_cost * kWh
+      - Margine energia: (hosting_sell - our_cost) * kWh
+      - Commissione mining: % su revenue mining cliente (in USD)
+      - Markup ASIC (one-off al mese 0): sum( (sale_price - buy_price) * units )
+      - EBITDA: margine energia + commissione - OPEX fissi
+      - Cashflow: EBITDA - CAPEX + markup_oneoff (solo mese 0)
+
+    NOTA: niente revenue da mining diretto nostro; solo commissioni.
+    """
+    uptime = scn.uptime_pct / 100.0
+    months = make_month_index(scn.months_horizon)
+
+    # Traiettorie dinamiche
+    nh_ths = float(network_ths_start)
+    nh_growth = scn.monthly_network_growth_pct / 100.0
+    price_usd = float(btc_price_usd_start if scn.btc_price_override is None else scn.btc_price_override)
+    price_growth = scn.btc_price_monthly_growth_pct / 100.0
+    fees_block = float(avg_fees_btc if scn.avg_fees_per_block_btc_override is None else scn.avg_fees_per_block_btc_override)
+
+    # Fleet e potenza
+    fleet_ths = scn.total_hashrate_ths(catalog)
+    it_power_kw = scn.total_power_kw(catalog)
+
+    # Calcolo markup ASIC one-off (al mese 0)
+    def _buy_cost_unit(m: str) -> float:
+        return float(catalog[m].unit_price_usd)
+    asic_markup_usd = 0.0
+    for m, units in scn.fleet.items():
+        if m in catalog and units > 0:
+            sell = float(scn.sale_price_overrides.get(m, catalog[m].unit_price_usd))
+            buy = _buy_cost_unit(m)
+            asic_markup_usd += max(sell - buy, 0.0) * float(units)
+    asic_markup_usd = float(asic_markup_usd)
+
+    # CAPEX totale (incluso costo acquisto ASIC)
+    total_capex = scn.total_capex_usd(catalog)
+
+    rows = []
+    for month_idx, month_start in enumerate(months):
+        dim = days_in_month(month_start)
+        hours = 24 * dim
+
+        # Curva prezzo energia: se non fornita, usa flat "our_energy_usd_per_kwh"
+        price_curve_our = build_price_curve_for_month(hours, scn.our_energy_usd_per_kwh, price_curve_usd_per_kwh)
+        price_curve_sell = build_price_curve_for_month(hours, scn.hosting_sell_usd_per_kwh, price_curve_usd_per_kwh)
+
+        # kWh consumati (IT × PUE × ore × uptime)
+        effective_kw = it_power_kw * scn.pue
+        kwh_month = effective_kw * float(np.sum(np.ones(hours))) * uptime  # = effective_kw * hours * uptime
+
+        # Ricavi/Costi energetici
+        # NOTA: dato che i prezzi possono essere orari, calcoliamo integrale con le curve.
+        # resa equivalente: somma(curva)*effective_kw*uptime
+        rev_energy = float(effective_kw * float(np.sum(price_curve_sell)) * uptime)
+        cost_energy = float(effective_kw * float(np.sum(price_curve_our)) * uptime)
+        margin_energy = float(rev_energy - cost_energy)
+
+        # Commissione su mining cliente (usiamo stessa formula della produzione, ma a noi entra solo la %)
+        subsidy_m = monthly_block_reward_btc(month_start, halving_date, subsidy_before, subsidy_after)
+        btc_day_client = expected_btc_per_day(fleet_ths, nh_ths, subsidy_m, fees_block or 0.0, uptime)
+        btc_month_client = btc_day_client * dim
+        mining_rev_client_usd = float(btc_month_client * price_usd)
+        commission_usd = float(mining_rev_client_usd * (scn.commission_hashrate_pct / 100.0))
+
+        # EBITDA hosting (margine energia + commissione - opex fissi)
+        ebitda = margin_energy + commission_usd - scn.fixed_opex_month_usd
+
+        # Ricavi mensili “contabili” (solo per reporting): energia venduta + commissione (senza markup ASIC)
+        rev_month_total = rev_energy + commission_usd
+
+        rows.append({
+            "month": month_start.strftime("%Y-%m"),
+            "date": month_start.date(),
+            "network_ths": nh_ths,
+            "btc_price_usd": price_usd,
+            "subsidy_btc": subsidy_m,
+            "fleet_ths": fleet_ths,
+            "it_power_kw": it_power_kw,
+
+            # Energia / commissioni
+            "kwh_equivalent": kwh_month,
+            "energy_revenue_usd": rev_energy,
+            "energy_cost_usd": cost_energy,
+            "energy_margin_usd": margin_energy,
+            "commission_usd": commission_usd,
+
+            # Totali di periodo
+            "rev_usd": rev_month_total,              # (energia venduta + commissione) — utile per grafici
+            "fixed_opex_usd": scn.fixed_opex_month_usd,
+            "ebitda_usd": ebitda,
+
+            # Markup ASIC visibile solo al mese 0 (riempiamo sotto)
+            "asic_markup_usd": 0.0,
+        })
+
+        # Aggiornamento traiettorie
+        nh_ths *= (1.0 + nh_growth)
+        price_usd = (price_usd * (1.0 + price_growth)) if (scn.btc_price_override is None) else scn.btc_price_override
+
+    df = pd.DataFrame(rows)
+
+    # Markup ASIC solo al mese 0
+    if len(df) > 0:
+        df.loc[df.index[0], "asic_markup_usd"] = asic_markup_usd
+
+    # Cashflow: EBITDA - CAPEX (al mese 0) + markup_oneoff (mese 0)
+    df["cashflow_usd"] = df["ebitda_usd"]
+    if len(df) > 0:
+        df.loc[df.index[0], "cashflow_usd"] = df.loc[df.index[0], "cashflow_usd"] - total_capex + asic_markup_usd
+    df["cum_cashflow_usd"] = df["cashflow_usd"].cumsum()
+
+    # Payback
+    payback_idx = df.index[df["cum_cashflow_usd"] >= 0]
+    df.attrs["payback_months"] = int(payback_idx[0] + 1) if len(payback_idx) else None
+    df.attrs["total_capex_usd"] = total_capex
+    df.attrs["fleet_ths"] = fleet_ths
+    df.attrs["it_power_kw"] = it_power_kw
+    df.attrs["asic_markup_usd"] = asic_markup_usd
+    return df
+
+
+# -----------------------------
 # Optimizer (Budget ASIC)
 # -----------------------------
 
@@ -714,7 +908,7 @@ st.title("⚡ DESMO Bitcoin Mining Optimizer")
 st.caption("Model mining economics, compare scenarios, schedule future steps and optimize ASIC budget.")
 
 top_cols = st.columns([1,1,2])
-mode = top_cols[0].radio("Mode", ["Classica", "Prossimi Step"], index=0, horizontal=True)
+mode = top_cols[0].radio("Mode", ["Classica", "Prossimi Step", "Hosting"], index=0, horizontal=True)
 
 # Halving controls (data stimata in base all'altezza attuale → 10 min/blocco)
 with top_cols[1]:
@@ -1045,7 +1239,7 @@ if mode == "Classica":
 # -----------------------------
 # Modalità Prossimi Step
 # -----------------------------
-else:
+elif mode == "Prossimi Step":
     st.subheader("2) Base Scenarios (t0)")
 
     if "scenarios_ns" not in st.session_state:
@@ -1316,5 +1510,211 @@ else:
                 nameb = best.iloc[0]["Scenario"]
                 st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
 
-st.divider()
+# -----------------------------
+# Modalità Hosting
+# -----------------------------
+elif mode == "Hosting":
+    st.subheader("2) Parametri Hosting")
 
+    if "hosting_scenarios" not in st.session_state:
+        st.session_state.hosting_scenarios: List[HostingScenario] = []  # type: ignore
+
+    # --- Fleet hosted (units per model) ---
+    st.markdown("**Fleet ospitata (units per model)**")
+    fleet_counts_host: Dict[str, int] = {}
+    hcols = st.columns(3)
+    for i, model_name in enumerate(catalog.keys()):
+        key = f"fleet_host_{model_name}"
+        val = hcols[i % 3].number_input(
+            model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
+        )
+        fleet_counts_host[model_name] = int(val)
+
+    # Metriche live
+    live_ths_h = sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_host.items() if m in catalog)
+    live_kw_h = sum(catalog[m].power_kw * n for m, n in fleet_counts_host.items() if m in catalog)
+    live_asic_cost_h = sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_host.items() if m in catalog)
+
+    mcols = st.columns(4)
+    mcols[0].metric("ASIC CAPEX (acquisto)", f"${live_asic_cost_h:,.0f}")
+    mcols[1].metric("Fleet TH/s (ospitata)", f"{live_ths_h:,.0f}")
+    mcols[2].metric("IT kW (ospitata)", f"{live_kw_h:,.0f}")
+    mcols[3].metric("$ per TH (acquisto)", f"${(live_asic_cost_h/live_ths_h):,.2f}" if live_ths_h>0 else "—")
+
+    st.divider()
+    st.markdown("**Prezzi di vendita ASIC (per modello)** — opzionale (default = costo acquisto)")
+    # Tabella prezzi vendita
+    sale_table = []
+    for name, mdl in catalog.items():
+        sale_table.append({"model": name, "buy_unit_price_usd": mdl.unit_price_usd, "sale_unit_price_usd": mdl.unit_price_usd})
+    sale_df = pd.DataFrame(sale_table).set_index("model")
+    sale_df_edit = st.data_editor(sale_df, num_rows="dynamic", key="sale_df_host")
+
+    # --- Form scenario hosting ---
+    with st.form("new_hosting_scenario"):
+        cols = st.columns(3)
+        name = cols[0].text_input("Name", value=f"Hosting {len(st.session_state.hosting_scenarios)+1}")
+        pue = cols[1].number_input("PUE", min_value=1.0, max_value=2.0, value=1.08, step=0.01, key="pue_host")
+        uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5, key="up_host")
+
+        st.markdown("**Energia (USD/kWh)**")
+        e1, e2 = st.columns(2)
+        our_energy = e1.number_input("Nostro costo $/kWh", min_value=0.0, step=0.001, value=float(st.session_state.get("flat_price_cached", 0.05)), format="%.3f")
+        hosting_sell = e2.number_input("Prezzo Hosting $/kWh (vendita)", min_value=0.0, step=0.001, value=max(our_energy, 0.08), format="%.3f")
+
+        st.markdown("**OPEX e CAPEX (USD)**")
+        c1, c2, c3, c4 = st.columns(4)
+        fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0, key="fop_host")
+        capex_asics = c2.number_input("CAPEX ASICs (0 = calcola da catalogo)", min_value=0.0, step=1000.0, value=0.0, key="capexa_host")
+        capex_container = c3.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=60000.0, key="capexc_host")
+        capex_transformer = c4.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0, key="capext_host")
+
+        c5, c6 = st.columns(2)
+        other_capex = c5.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0, key="capexo_host")
+        commission_pct = c6.number_input("Commissione mining % su revenue cliente", min_value=0.0, max_value=100.0, step=0.5, value=10.0, key="comm_host")
+
+        st.markdown("**Assunzioni finanziarie**")
+        f1, f2, f3 = st.columns(3)
+        btc_price_override = f1.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0, key="btc_host")
+        default_avg_fees_btc = float((avg_fees if avg_fees is not None else 0.0))
+        avg_fees_override = f2.number_input("Avg fees per block BTC", min_value=0.0, step=0.00000001, value=default_avg_fees_btc, format="%.8f", key="fees_host")
+        months_horizon = int(f3.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6, key="hor_host"))
+
+        g1, g2 = st.columns(2)
+        monthly_net_growth = g1.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_host")
+        btc_price_mom = g2.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1, key="prg_host")
+
+        submitted_host = st.form_submit_button("➕ Add hosting scenario")
+
+    if submitted_host:
+        # Costruisci dizionario prezzi vendita (override)
+        sale_overrides: Dict[str, float] = {}
+        try:
+            for model_name, row in sale_df_edit.iterrows():
+                sale_overrides[model_name] = float(row.get("sale_unit_price_usd", catalog.get(model_name, AsicModel(model_name,0,0,0)).unit_price_usd))
+        except Exception:
+            pass
+
+        scn_h = HostingScenario(
+            name=name,
+            fleet={k:int(v) for k,v in fleet_counts_host.items() if int(v)>0},
+            pue=float(pue),
+            uptime_pct=float(uptime_pct),
+            fixed_opex_month_usd=float(fixed_opex),
+            our_energy_usd_per_kwh=float(our_energy),
+            hosting_sell_usd_per_kwh=float(hosting_sell),
+            sale_price_overrides=sale_overrides,
+            capex_asics_usd=float(capex_asics),
+            capex_container_usd=float(capex_container),
+            capex_transformer_usd=float(capex_transformer),
+            other_capex_usd=float(other_capex),
+            btc_price_override=float(btc_price_override) if btc_price_override>0 else None,
+            avg_fees_per_block_btc_override=float(avg_fees_override) if avg_fees_override>0 else None,
+            monthly_network_growth_pct=float(monthly_net_growth),
+            btc_price_monthly_growth_pct=float(btc_price_mom),
+            months_horizon=int(months_horizon),
+            commission_hashrate_pct=float(commission_pct),
+        )
+        st.session_state.hosting_scenarios.append(scn_h)
+        st.success(f"Added {scn_h.name} ✅")
+
+    if not st.session_state.hosting_scenarios:
+        st.info("Aggiungi almeno uno scenario Hosting.")
+    else:
+        tabs = st.tabs([s.name for s in st.session_state.hosting_scenarios] + ["📊 Compare"])
+        dfs_h = []
+
+        # Live data comuni
+        live_btc_price = price_usd
+        live_avg_fees = avg_fees if avg_fees is not None else 0.0
+        live_network_ths = net_ths
+
+        for idx, scn_h in enumerate(st.session_state.hosting_scenarios):
+            with tabs[idx]:
+                btc_p0 = scn_h.btc_price_override or live_btc_price
+                fees0 = scn_h.avg_fees_per_block_btc_override if scn_h.avg_fees_per_block_btc_override is not None else live_avg_fees
+
+                dfh = simulate_hosting_scenario(
+                    scn=scn_h,
+                    catalog=catalog,
+                    network_ths_start=live_network_ths,
+                    avg_fees_btc=fees0,
+                    btc_price_usd_start=btc_p0,
+                    price_curve_usd_per_kwh=price_curve,
+                    halving_date=halving_date_input,
+                    subsidy_before=subsidy_before,
+                    subsidy_after=subsidy_after,
+                )
+                dfs_h.append((scn_h, dfh))
+
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("Fleet TH/s (ospitata)", f"{dfh.attrs['fleet_ths']:,.0f}")
+                k2.metric("IT Power kW", f"{dfh.attrs['it_power_kw']:,.0f}")
+                k3.metric("Total CAPEX", f"${dfh.attrs['total_capex_usd']:,.0f}")
+                k4.metric("Payback (months)", dfh.attrs["payback_months"] if dfh.attrs["payback_months"] else "—")
+
+                # Evidenzia il one-off markup
+                st.metric("ASIC Markup (one-off @ t0)", f"${dfh.attrs['asic_markup_usd']:,.0f}")
+
+                st.dataframe(
+                    dfh[[
+                        "month","btc_price_usd","subsidy_btc",
+                        "kwh_equivalent",
+                        "energy_revenue_usd","energy_cost_usd","energy_margin_usd",
+                        "commission_usd",
+                        "rev_usd","fixed_opex_usd","ebitda_usd",
+                        "asic_markup_usd","cashflow_usd","cum_cashflow_usd"
+                    ]],
+                    key=f"df_host_{idx}"
+                )
+
+                # Charts
+                fig = go.Figure()
+                fig.add_trace(go.Bar(x=dfh["month"], y=dfh["cashflow_usd"], name="Monthly Cashflow"))
+                fig.add_trace(go.Scatter(x=dfh["month"], y=dfh["cum_cashflow_usd"], name="Cumulative", mode="lines+markers"))
+                fig.update_layout(title=f"Cashflow — {scn_h.name} (Hosting)", xaxis_title="Month", yaxis_title="USD", barmode="group")
+                st.plotly_chart(fig, use_container_width=True, key=f"cf_host_{idx}")
+
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    f1 = go.Figure()
+                    f1.add_trace(go.Bar(x=dfh["month"], y=dfh["energy_margin_usd"], name="Energy margin"))
+                    f1.update_layout(title="Margine energia (mensile)", xaxis_title="Month", yaxis_title="USD")
+                    st.plotly_chart(f1, use_container_width=True, key=f"em_host_{idx}")
+                with c2:
+                    f2 = go.Figure()
+                    f2.add_trace(go.Bar(x=dfh["month"], y=dfh["commission_usd"], name="Commission"))
+                    f2.update_layout(title="Commissione mining (mensile)", xaxis_title="Month", yaxis_title="USD")
+                    st.plotly_chart(f2, use_container_width=True, key=f"cm_host_{idx}")
+                with c3:
+                    f3 = go.Figure()
+                    f3.add_trace(go.Scatter(x=dfh["month"], y=dfh["btc_price_usd"], mode="lines+markers", name="BTC Price"))
+                    f3.update_layout(title="BTC Price path", xaxis_title="Month", yaxis_title="USD")
+                    st.plotly_chart(f3, use_container_width=True, key=f"bp_host_{idx}")
+
+        # Tab di confronto
+        with tabs[-1]:
+            comp_rows = []
+            for scn_h, dfh in dfs_h:
+                comp_rows.append({
+                    "Scenario": scn_h.name,
+                    "Fleet TH/s (ospitata)": dfh.attrs['fleet_ths'],
+                    "IT kW": dfh.attrs['it_power_kw'],
+                    "Total CAPEX $": dfh.attrs['total_capex_usd'],
+                    "ASIC Markup one-off $": dfh.attrs['asic_markup_usd'],
+                    "Payback months": dfh.attrs['payback_months'] or np.nan,
+                    "Year-1 EBITDA $": float(dfh.loc[:11, "ebitda_usd"].sum()),
+                    "Year-2 EBITDA $": float(dfh.loc[12:23, "ebitda_usd"].sum()) if len(dfh) >= 24 else np.nan,
+                    "Year-3 EBITDA $": float(dfh.loc[24:35, "ebitda_usd"].sum()) if len(dfh) >= 36 else np.nan,
+                    "Cum CF @ 36m $": float(dfh.loc[min(len(dfh)-1,35), "cum_cashflow_usd"]) if len(dfh) >= 12 else float(dfh.iloc[-1]["cum_cashflow_usd"]),
+                })
+            comp_df = pd.DataFrame(comp_rows)
+            st.dataframe(comp_df, key="df_compare_hosting")
+
+            best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
+            if not best.empty:
+                nameb = best.iloc[0]["Scenario"]
+                st.success(f"🏆 Best 36m cumulative cashflow (Hosting): **{nameb}**")
+
+
+st.divider()
