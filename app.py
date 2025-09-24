@@ -307,7 +307,7 @@ class AsicModel:
     hashrate_ths: float  # per unit
     power_kw: float      # at-the-wall, per unit
     unit_price_usd: float
-    disponibility: str
+    disponibility: str = "not-set"
 
 # Catalogo (puoi modificarlo in UI)
 DEFAULT_CATALOG: Dict[str, AsicModel] = {
@@ -1145,10 +1145,13 @@ with st.expander("ASIC Catalog (editable)", expanded=False):
     catalog: Dict[str, AsicModel] = {}
     for name, row in edited.iterrows():
         try:
-            catalog[name] = AsicModel(name=name,
-                                      hashrate_ths=float(row["hashrate_ths"]),
-                                      power_kw=float(row["power_kw"]),
-                                      unit_price_usd=float(row["unit_price_usd"]))
+            catalog[name] = AsicModel(
+                name=name,
+                hashrate_ths=float(row["hashrate_ths"]),
+                power_kw=float(row["power_kw"]),
+                unit_price_usd=float(row["unit_price_usd"]),
+                disponibility=str(row.get("disponibility", "now"))  # <- QUI
+            )
         except Exception:
             pass
 
@@ -1724,43 +1727,40 @@ elif mode == "Hosting":
 
     st.divider()
     with st.expander("**Prezzi di vendita ASIC (per modello)** — opzionale (default = costo acquisto)", expanded=False):
-        st.caption("Compila uno dei due campi qui sotto per impostare TUTTI i prezzi di vendita a partire dal prezzo di acquisto. Se compili entrambi, ha priorità il markup assoluto.")
+        st.caption("Compila uno dei due campi qui sotto per impostare TUTTI i prezzi di vendita...")
 
         c1, c2 = st.columns(2)
-        perc_markup = c1.number_input(
-            "Markup % su prezzo di acquisto (es. 10 = +10%)",
-            value=0.0, step=0.5, format="%.2f", key="sale_markup_pct"
-        )
-        abs_markup = c2.number_input(
-            "Markup assoluto $/unit (es. 100 = +$100)",
-            value=0.0, step=10.0, format="%.2f", key="sale_markup_abs"
-        )
+        perc_markup = c1.number_input("Markup % su prezzo di acquisto (es. 10 = +10%)",
+                                    value=0.0, step=0.5, format="%.2f", key="sale_markup_pct")
+        abs_markup = c2.number_input("Markup assoluto $/unit (es. 100 = +$100)",
+                                    value=0.0, step=10.0, format="%.2f", key="sale_markup_abs")
 
-        # Costruzione tabella iniziale con regole di markup
-        sale_table = []
-        for name, mdl in catalog.items():
-            buy = float(mdl.unit_price_usd)
-            if abs_markup != 0.0:
-                sale = buy + float(abs_markup)
-            elif perc_markup != 0.0:
-                sale = buy * (1.0 + float(perc_markup) / 100.0)
-            else:
-                sale = buy
+        if not catalog:
+            st.warning("Catalogo vuoto: compila almeno un modello nell’editor sopra.")
+            sale_df_edit = pd.DataFrame(columns=["buy_unit_price_usd", "sale_unit_price_usd"])
+        else:
+            sale_table = []
+            for name, mdl in catalog.items():
+                buy = float(mdl.unit_price_usd)
+                if abs_markup != 0.0:
+                    sale = buy + float(abs_markup)
+                elif perc_markup != 0.0:
+                    sale = buy * (1.0 + float(perc_markup) / 100.0)
+                else:
+                    sale = buy
 
-            sale_table.append({
-                "model": name,
-                "buy_unit_price_usd": buy,
-                "sale_unit_price_usd": float(sale)
-            })
+                sale_table.append({
+                    "model": name,
+                    "buy_unit_price_usd": buy,
+                    "sale_unit_price_usd": float(sale)
+                })
 
-        sale_df = pd.DataFrame(sale_table).set_index("model")
+            sale_df = pd.DataFrame(sale_table)
+            if "model" in sale_df.columns:
+                sale_df = sale_df.set_index("model")
 
-        # Editor: puoi ancora modificare valori singoli dopo il pre-riempimento
-        sale_df_edit = st.data_editor(
-            sale_df,
-            num_rows="dynamic",
-            key="sale_df_host"
-        )
+            sale_df_edit = st.data_editor(sale_df, num_rows="dynamic", key="sale_df_host")
+
 
 
     # --- Form scenario hosting ---
@@ -1805,8 +1805,9 @@ elif mode == "Hosting":
         # Costruisci dizionario prezzi vendita (override)
         sale_overrides: Dict[str, float] = {}
         try:
-            for model_name, row in sale_df_edit.iterrows():
-                sale_overrides[model_name] = float(row.get("sale_unit_price_usd", catalog.get(model_name, AsicModel(model_name,0,0,0)).unit_price_usd))
+          for model_name, row in sale_df_edit.iterrows():
+            default_price = catalog.get(model_name).unit_price_usd if model_name in catalog else 0.0
+            sale_overrides[model_name] = float(row.get("sale_unit_price_usd", default_price))
         except Exception:
             pass
 
