@@ -1777,8 +1777,13 @@ elif mode == "Hosting":
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("Fleet TH/s (ospitata)", f"{dfh.attrs['fleet_ths']:,.0f}")
                 k2.metric("IT Power kW", f"{dfh.attrs['it_power_kw']:,.0f}")
-                k3.metric("Total CAPEX", f"${dfh.attrs['total_capex_usd']:,.0f}")
+                k3.metric("Infra CAPEX", f"${dfh.attrs['infra_capex_usd']:,.0f}")
                 k4.metric("Payback (months)", dfh.attrs["payback_months"] if dfh.attrs["payback_months"] else "—")
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("ASIC buy (pass-through)", f"${dfh.attrs['asic_buy_cost_usd']:,.0f}")
+                c2.metric("ASIC sale (pass-through)", f"${dfh.attrs['asic_sale_revenue_usd']:,.0f}")
+                c3.metric("ASIC Markup (one-off @ t0)", f"${dfh.attrs['asic_markup_usd']:,.0f}")
 
                 # Evidenzia il one-off markup
                 st.metric("ASIC Markup (one-off @ t0)", f"${dfh.attrs['asic_markup_usd']:,.0f}")
