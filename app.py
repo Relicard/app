@@ -1723,13 +1723,45 @@ elif mode == "Hosting":
     mcols[3].metric("$ per TH (acquisto)", f"${(live_asic_cost_h/live_ths_h):,.2f}" if live_ths_h>0 else "—")
 
     st.divider()
-    st.markdown("**Prezzi di vendita ASIC (per modello)** — opzionale (default = costo acquisto)")
-    # Tabella prezzi vendita
-    sale_table = []
-    for name, mdl in catalog.items():
-        sale_table.append({"model": name, "buy_unit_price_usd": mdl.unit_price_usd, "sale_unit_price_usd": mdl.unit_price_usd})
-    sale_df = pd.DataFrame(sale_table).set_index("model")
-    sale_df_edit = st.data_editor(sale_df, num_rows="dynamic", key="sale_df_host")
+    with st.expander("**Prezzi di vendita ASIC (per modello)** — opzionale (default = costo acquisto)", expanded=False):
+        st.caption("Compila uno dei due campi qui sotto per impostare TUTTI i prezzi di vendita a partire dal prezzo di acquisto. Se compili entrambi, ha priorità il markup assoluto.")
+
+        c1, c2 = st.columns(2)
+        perc_markup = c1.number_input(
+            "Markup % su prezzo di acquisto (es. 10 = +10%)",
+            value=0.0, step=0.5, format="%.2f", key="sale_markup_pct"
+        )
+        abs_markup = c2.number_input(
+            "Markup assoluto $/unit (es. 100 = +$100)",
+            value=0.0, step=10.0, format="%.2f", key="sale_markup_abs"
+        )
+
+        # Costruzione tabella iniziale con regole di markup
+        sale_table = []
+        for name, mdl in catalog.items():
+            buy = float(mdl.unit_price_usd)
+            if abs_markup != 0.0:
+                sale = buy + float(abs_markup)
+            elif perc_markup != 0.0:
+                sale = buy * (1.0 + float(perc_markup) / 100.0)
+            else:
+                sale = buy
+
+            sale_table.append({
+                "model": name,
+                "buy_unit_price_usd": buy,
+                "sale_unit_price_usd": float(sale)
+            })
+
+        sale_df = pd.DataFrame(sale_table).set_index("model")
+
+        # Editor: puoi ancora modificare valori singoli dopo il pre-riempimento
+        sale_df_edit = st.data_editor(
+            sale_df,
+            num_rows="dynamic",
+            key="sale_df_host"
+        )
+
 
     # --- Form scenario hosting ---
     with st.form("new_hosting_scenario"):
