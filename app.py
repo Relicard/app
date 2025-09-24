@@ -753,7 +753,8 @@ def simulate_hosting_scenario(
       - Commissione mining: % su revenue mining cliente (in USD)
       - Markup ASIC (one-off al mese 0): sum( (sale_price - buy_price) * units )
       - EBITDA: margine energia + commissione - OPEX fissi
-      - Cashflow: EBITDA - CAPEX + markup_oneoff (solo mese 0)
+      - Cashflow: EBITDA - **solo Infra CAPEX** (al mese 0) + markup_oneoff (mese 0)
+    NOTA: il costo d’acquisto ASIC NON entra nel cashflow (lo recuperiamo via vendita).
     """
     uptime = scn.uptime_pct / 100.0
     months = make_month_index(scn.months_horizon)
@@ -769,26 +770,31 @@ def simulate_hosting_scenario(
     fleet_ths = scn.total_hashrate_ths(catalog)
     it_power_kw = scn.total_power_kw(catalog)
 
-    # Calcolo markup ASIC one-off (al mese 0)
+    # Markup ASIC one-off (al mese 0) e costo acquisto (solo informativo)
     def _buy_cost_unit(m: str) -> float:
         return float(catalog[m].unit_price_usd)
+
     asic_markup_usd = 0.0
+    asic_buy_cost = 0.0
     for m, units in scn.fleet.items():
         if m in catalog and units > 0:
-            sell = float(scn.sale_price_overrides.get(m, catalog[m].unit_price_usd))
             buy = _buy_cost_unit(m)
+            sell = float(scn.sale_price_overrides.get(m, buy))
+            asic_buy_cost += buy * float(units)
             asic_markup_usd += max(sell - buy, 0.0) * float(units)
     asic_markup_usd = float(asic_markup_usd)
+    asic_buy_cost = float(asic_buy_cost)  # non usato nel cashflow
 
-    # CAPEX totale (incluso costo acquisto ASIC)
-    total_capex = scn.total_capex_usd(catalog)
+    # --- CAPEX ---
+    # Solo infrastruttura va nel cashflow (container/trafo/other)
+    infra_capex = float(scn.capex_container_usd + scn.capex_transformer_usd + scn.other_capex_usd)
 
     rows = []
     for month_idx, month_start in enumerate(months):
         dim = days_in_month(month_start)
         hours = 24 * dim
 
-        # Curva prezzo energia: se non fornita, usa flat "our_energy_usd_per_kwh"
+        # Curve prezzi energia (se non fornita una curva, usa i flat)
         price_curve_our = build_price_curve_for_month(hours, scn.our_energy_usd_per_kwh, price_curve_usd_per_kwh)
         price_curve_sell = build_price_curve_for_month(hours, scn.hosting_sell_usd_per_kwh, price_curve_usd_per_kwh)
 
@@ -796,14 +802,12 @@ def simulate_hosting_scenario(
         effective_kw = it_power_kw * scn.pue
         kwh_month = effective_kw * float(np.sum(np.ones(hours))) * uptime  # = effective_kw * hours * uptime
 
-        # Ricavi/Costi energetici
-        # NOTA: dato che i prezzi possono essere orari, calcoliamo integrale con le curve.
-        # resa equivalente: somma(curva)*effective_kw*uptime
+        # Ricavi/Costi energetici (integrale delle curve * kW * uptime)
         rev_energy = float(effective_kw * float(np.sum(price_curve_sell)) * uptime)
         cost_energy = float(effective_kw * float(np.sum(price_curve_our)) * uptime)
         margin_energy = float(rev_energy - cost_energy)
 
-        # Commissione su mining cliente (usiamo stessa formula della produzione, ma a noi entra solo la %)
+        # Commissione su revenue mining del cliente
         subsidy_m = monthly_block_reward_btc(month_start, halving_date, subsidy_before, subsidy_after)
         btc_day_client = expected_btc_per_day(fleet_ths, nh_ths, subsidy_m, fees_block or 0.0, uptime)
         btc_month_client = btc_day_client * dim
@@ -813,7 +817,7 @@ def simulate_hosting_scenario(
         # EBITDA hosting (margine energia + commissione - opex fissi)
         ebitda = margin_energy + commission_usd - scn.fixed_opex_month_usd
 
-        # Ricavi mensili “contabili” (solo per reporting): energia venduta + commissione (senza markup ASIC)
+        # Ricavi mensili totali "visivi" (senza markup one-off)
         rev_month_total = rev_energy + commission_usd
 
         rows.append({
@@ -833,15 +837,15 @@ def simulate_hosting_scenario(
             "commission_usd": commission_usd,
 
             # Totali di periodo
-            "rev_usd": rev_month_total,              # (energia venduta + commissione) — utile per grafici
+            "rev_usd": rev_month_total,
             "fixed_opex_usd": scn.fixed_opex_month_usd,
             "ebitda_usd": ebitda,
 
-            # Markup ASIC visibile solo al mese 0 (riempiamo sotto)
+            # Markup ASIC (mettiamo 0 di default, lo inseriamo nel mese 0 dopo)
             "asic_markup_usd": 0.0,
         })
 
-        # Aggiornamento traiettorie
+        # Aggiorna traiettorie per mese successivo
         nh_ths *= (1.0 + nh_growth)
         price_usd = (price_usd * (1.0 + price_growth)) if (scn.btc_price_override is None) else scn.btc_price_override
 
@@ -851,19 +855,20 @@ def simulate_hosting_scenario(
     if len(df) > 0:
         df.loc[df.index[0], "asic_markup_usd"] = asic_markup_usd
 
-    # Cashflow: EBITDA - CAPEX (al mese 0) + markup_oneoff (mese 0)
+    # Cashflow: EBITDA - **SOLO infra CAPEX** (al mese 0) + markup_oneoff (mese 0)
     df["cashflow_usd"] = df["ebitda_usd"]
     if len(df) > 0:
-        df.loc[df.index[0], "cashflow_usd"] = df.loc[df.index[0], "cashflow_usd"] - total_capex + asic_markup_usd
+        df.loc[df.index[0], "cashflow_usd"] = df.loc[df.index[0], "cashflow_usd"] - infra_capex + asic_markup_usd
     df["cum_cashflow_usd"] = df["cashflow_usd"].cumsum()
 
-    # Payback
+    # Payback & attributi
     payback_idx = df.index[df["cum_cashflow_usd"] >= 0]
     df.attrs["payback_months"] = int(payback_idx[0] + 1) if len(payback_idx) else None
-    df.attrs["total_capex_usd"] = total_capex
+    df.attrs["total_capex_usd"] = infra_capex          # mostriamo solo il CAPEX infrastrutturale
     df.attrs["fleet_ths"] = fleet_ths
     df.attrs["it_power_kw"] = it_power_kw
     df.attrs["asic_markup_usd"] = asic_markup_usd
+    df.attrs["asic_buy_cost_usd"] = asic_buy_cost      # informativo (non usato nel cashflow)
     return df
 
 
