@@ -307,19 +307,21 @@ class AsicModel:
     hashrate_ths: float  # per unit
     power_kw: float      # at-the-wall, per unit
     unit_price_usd: float
+    disponibility: str
 
 # Catalogo (puoi modificarlo in UI)
 DEFAULT_CATALOG: Dict[str, AsicModel] = {
-    "Antminer S19 PRO 110T": AsicModel("Antminer S19 PRO 110T", hashrate_ths=110.0, power_kw=3.25, unit_price_usd=319.0),
-    "Antminer S19 XP 141T": AsicModel("Antminer S19 XP 141T", hashrate_ths=141.0, power_kw=3.01, unit_price_usd=1100.0),
-    "Bitmain S21 200T": AsicModel("Bitmain S21 200T", hashrate_ths=200.0, power_kw=3.50, unit_price_usd=2840.0),
-    "Bitmain S21 Pro 220T": AsicModel("Bitmain S21 Pro 220T", hashrate_ths=220.0, power_kw=3.300, unit_price_usd=3432.0),
-    "Bitmain S21+ 225T": AsicModel("Bitmain S21+ 225T", hashrate_ths=225.0, power_kw=3.7125, unit_price_usd=3217.5),
-    "Bitmain S21 Pro 234T": AsicModel("Bitmain S21 Pro 234T", hashrate_ths=234.0, power_kw=3.510, unit_price_usd=3814.2),
-    "Bitmain S21+ 235T": AsicModel("Bitmain S21+ 235T", hashrate_ths=235.0, power_kw=3.8775, unit_price_usd=3384.0),
-    "Bitmain S21 Pro 245T": AsicModel("Bitmain S21 Pro 245T", hashrate_ths=245.0, power_kw=3.675, unit_price_usd=4091.5),
-    "Bitmain S21XP 270T": AsicModel("Bitmain S21XP 270T", hashrate_ths=270.0, power_kw=3.645, unit_price_usd=5805.0),
-    "Bitdeer A2 226TH": AsicModel("Bitdeer A2 226TH", hashrate_ths=226.0, power_kw=3.729, unit_price_usd=3557.0),
+    "Antminer S19 PRO 110T": AsicModel("Antminer S19 PRO 110T", hashrate_ths=110.0, power_kw=3.25, unit_price_usd=319.0, disponibility="now"),
+    "Antminer S19 XP 141T": AsicModel("Antminer S19 XP 141T", hashrate_ths=141.0, power_kw=3.01, unit_price_usd=1100.0, disponibility="now"),
+    "Bitmain S21 200T": AsicModel("Bitmain S21 200T", hashrate_ths=200.0, power_kw=3.50, unit_price_usd=2840.0, disponibility="now"),
+    "Bitmain S21 Pro 220T": AsicModel("Bitmain S21 Pro 220T", hashrate_ths=220.0, power_kw=3.300, unit_price_usd=3432.0, disponibility="now"),
+    "Bitmain S21+ 225T": AsicModel("Bitmain S21+ 225T", hashrate_ths=225.0, power_kw=3.7125, unit_price_usd=3217.5, disponibility="now"),
+    "Bitmain S21 Pro 234T": AsicModel("Bitmain S21 Pro 234T", hashrate_ths=234.0, power_kw=3.510, unit_price_usd=3814.2, disponibility="now"),
+    "Bitmain S21+ 235T": AsicModel("Bitmain S21+ 235T", hashrate_ths=235.0, power_kw=3.8775, unit_price_usd=3384.0, disponibility="now"),
+    "Bitmain S21 Pro 245T": AsicModel("Bitmain S21 Pro 245T", hashrate_ths=245.0, power_kw=3.675, unit_price_usd=4091.5, disponibility="now"),
+    "Bitmain S21XP 270T": AsicModel("Bitmain S21XP 270T", hashrate_ths=270.0, power_kw=3.645, unit_price_usd=5805.0, disponibility="now"),
+    "Bitdeer A2 Pro Air 226TH": AsicModel("Bitdeer A2 Pro air 226TH", hashrate_ths=226.0, power_kw=3.729, unit_price_usd=3557.0, disponibility="November"),
+    "Bitdeer A2 Pro Hydro 500TH": AsicModel("Bitdeer A2 Pro Hydro 500TH", hashrate_ths=500.0, power_kw=7.450, unit_price_usd=7500.0, disponibility="November"),
 }
 
 @dataclass
