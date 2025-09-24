@@ -1668,7 +1668,7 @@ elif mode == "Prossimi Step":
                 st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
 
         with st.expander("📚 Scenari pubblici (Prossimi Step)"):
-            pub = list_public_scenarios("Prossimi Step")
+            pub = list_public_scenarios("prossimi_step")  # <-- minuscolo + underscore
             if not pub:
                 st.caption("Nessuno scenario pubblico salvato.")
             else:
@@ -1677,7 +1677,7 @@ elif mode == "Prossimi Step":
 
                 # bottone per cancellare tutto
                 if st.button("❌ Elimina tutti gli scenari pubblici (Prossimi Step)"):
-                    clear_public_scenarios("Prossimi Step")
+                    clear_public_scenarios("prossimi_step")  # <-- qui
                     st.success("Scenari pubblici (Prossimi Step) eliminati.")
                     st.rerun()
 
@@ -1686,10 +1686,10 @@ elif mode == "Prossimi Step":
                     "Seleziona scenario da eliminare",
                     options=list(range(len(pub))),
                     format_func=lambda i: f"{i} — {pub[i].get('name','?')}",
-                    key="del_Prossimi Step"
+                    key="del_prossimi_step"  # (consiglio: niente spazi nei key)
                 )
                 if st.button("Elimina scenario selezionato (Prossimi Step)"):
-                    if delete_public_scenario("Prossimi Step", idx_to_delete):
+                    if delete_public_scenario("prossimi_step", idx_to_delete):  # <-- qui
                         st.success("Scenario eliminato.")
                         st.rerun()
 
