@@ -1936,9 +1936,9 @@ elif mode == "Hosting":
             best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
             if not best.empty:
                 nameb = best.iloc[0]["Scenario"]
-                st.success(f"🏆 Best 36m cumulative cashflow (Hosting): **{nameb}**")
-        with st.expander("📚 Scenari pubblici (Hosting)"):
-            pub = list_public_scenarios("Hosting")
+                st.success(f"🏆 Best 36m cumulative cashflow (hosting): **{nameb}**")
+        with st.expander("📚 Scenari pubblici (hosting)"):
+            pub = list_public_scenarios("hosting")
             if not pub:
                 st.caption("Nessuno scenario pubblico salvato.")
             else:
@@ -1946,9 +1946,9 @@ elif mode == "Hosting":
                 st.dataframe(df_pub)
 
                 # bottone per cancellare tutto
-                if st.button("❌ Elimina tutti gli scenari pubblici (Hosting)"):
-                    clear_public_scenarios("Hosting")
-                    st.success("Scenari pubblici (Hosting) eliminati.")
+                if st.button("❌ Elimina tutti gli scenari pubblici (hosting)"):
+                    clear_public_scenarios("hosting")
+                    st.success("Scenari pubblici (hosting) eliminati.")
                     st.rerun()
 
                 # dropdown per cancellare singolo scenario
@@ -1956,10 +1956,10 @@ elif mode == "Hosting":
                     "Seleziona scenario da eliminare",
                     options=list(range(len(pub))),
                     format_func=lambda i: f"{i} — {pub[i].get('name','?')}",
-                    key="del_Hosting"
+                    key="del_hosting"
                 )
-                if st.button("Elimina scenario selezionato (Hosting)"):
-                    if delete_public_scenario("Hosting", idx_to_delete):
+                if st.button("Elimina scenario selezionato (hosting)"):
+                    if delete_public_scenario("hosting", idx_to_delete):
                         st.success("Scenario eliminato.")
                         st.rerun()
 
