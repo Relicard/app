@@ -12,6 +12,38 @@ from dateutil.relativedelta import relativedelta  # type: ignore
 import streamlit as st # type: ignore
 import plotly.graph_objects as go # type: ignore
 import os
+import json
+from pathlib import Path
+from threading import RLock
+
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
+SCENARIOS_FILE = DATA_DIR / "public_scenarios.json"   # tutti gli scenari condivisi
+LOCK = RLock()
+
+def _read_all() -> dict:
+    if not SCENARIOS_FILE.exists():
+        return {"classica": [], "prossimi_step": [], "hosting": []}
+    try:
+        with LOCK, SCENARIOS_FILE.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"classica": [], "prossimi_step": [], "hosting": []}
+
+def _write_all(payload: dict) -> None:
+    with LOCK, SCENARIOS_FILE.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+def save_public_scenario(kind: str, payload: dict) -> None:
+    """kind ∈ {'classica','prossimi_step','hosting'}"""
+    data = _read_all()
+    data.setdefault(kind, [])
+    data[kind].append(payload)
+    _write_all(data)
+
+def list_public_scenarios(kind: str) -> list[dict]:
+    data = _read_all()
+    return data.get(kind, [])
 
 def get_secret(name: str, default: str = "") -> str:
     v = os.getenv(name)
@@ -384,6 +416,59 @@ class HostingScenario:
             catalog[m].unit_price_usd * n for m, n in self.fleet.items() if m in catalog
         )
         return float(asic_capex + self.capex_container_usd + self.capex_transformer_usd + self.other_capex_usd)
+
+def scenario_to_public_dict(scn: Scenario, catalog: dict, author: str = "anonymous") -> dict:
+    return {
+        "type": "classica",
+        "name": scn.name,
+        "fleet": scn.fleet,
+        "pue": scn.pue,
+        "uptime_pct": scn.uptime_pct,
+        "fixed_opex_month_usd": scn.fixed_opex_month_usd,
+        "variable_energy_usd_per_kwh": scn.variable_energy_usd_per_kwh,
+        "capex_asics_usd": scn.capex_asics_usd,
+        "capex_container_usd": scn.capex_container_usd,
+        "capex_transformer_usd": scn.capex_transformer_usd,
+        "other_capex_usd": scn.other_capex_usd,
+        "btc_price_override": scn.btc_price_override,
+        "avg_fees_per_block_btc_override": scn.avg_fees_per_block_btc_override,
+        "monthly_network_growth_pct": scn.monthly_network_growth_pct,
+        "btc_price_monthly_growth_pct": scn.btc_price_monthly_growth_pct,
+        "months_horizon": scn.months_horizon,
+        "author": author,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+
+def step_to_public_dict(step: FutureStep) -> dict:
+    d = step.__dict__.copy()
+    d["type"] = "step"
+    d["timestamp"] = datetime.utcnow().isoformat() + "Z"
+    return d
+
+def hosting_to_public_dict(hscn: HostingScenario, author: str = "anonymous") -> dict:
+    return {
+        "type": "hosting",
+        "name": hscn.name,
+        "fleet": hscn.fleet,
+        "pue": hscn.pue,
+        "uptime_pct": hscn.uptime_pct,
+        "fixed_opex_month_usd": hscn.fixed_opex_month_usd,
+        "our_energy_usd_per_kwh": hscn.our_energy_usd_per_kwh,
+        "hosting_sell_usd_per_kwh": hscn.hosting_sell_usd_per_kwh,
+        "sale_price_overrides": hscn.sale_price_overrides,
+        "capex_asics_usd": hscn.capex_asics_usd,
+        "capex_container_usd": hscn.capex_container_usd,
+        "capex_transformer_usd": hscn.capex_transformer_usd,
+        "other_capex_usd": hscn.other_capex_usd,
+        "btc_price_override": hscn.btc_price_override,
+        "avg_fees_per_block_btc_override": hscn.avg_fees_per_block_btc_override,
+        "monthly_network_growth_pct": hscn.monthly_network_growth_pct,
+        "btc_price_monthly_growth_pct": hscn.btc_price_monthly_growth_pct,
+        "months_horizon": hscn.months_horizon,
+        "commission_hashrate_pct": hscn.commission_hashrate_pct,
+        "author": author,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
 
 
 # -----------------------------
@@ -1121,6 +1206,8 @@ if mode == "Classica":
         monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1)
         btc_price_mom = c10.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1)
         months_horizon = int(c11.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6))
+        public_box = st.checkbox("Salva scenario come pubblico (visibile a tutti)", value=False, key="save_public_classic")
+        author_name = st.text_input("Autore (facoltativo)", value="", key="author_classic")
 
         submitted = st.form_submit_button("➕ Add scenario")
 
@@ -1144,6 +1231,12 @@ if mode == "Classica":
         )
         st.session_state.scenarios.append(scn)
         st.success(f"Added {scn.name} ✅")
+
+    if public_box:
+        author = author_name.strip() or "anonymous"
+        payload = scenario_to_public_dict(scn, catalog, author=author)
+        save_public_scenario("classica", payload)
+        st.success("Scenario pubblicato ✅")
 
     if not st.session_state.scenarios:
         st.info("Add one or more scenarios to begin.")
@@ -1235,6 +1328,13 @@ if mode == "Classica":
             if not best.empty:
                 nameb = best.iloc[0]["Scenario"]
                 st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
+
+            with st.expander("📚 Scenari pubblici (Classica)"):
+                pub = list_public_scenarios("classica")
+                if not pub:
+                    st.caption("Nessuno scenario pubblico salvato.")
+                else:
+                    st.dataframe(pd.DataFrame(pub))
 
 # -----------------------------
 # Modalità Prossimi Step
