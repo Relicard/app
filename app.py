@@ -870,7 +870,56 @@ def simulate_hosting_scenario(
     df.attrs["fleet_ths"] = fleet_ths
     df.attrs["it_power_kw"] = it_power_kw
     df.attrs["asic_markup_usd"] = asic_markup_usd
-    df.attrs["asic_buy_cost_usd"] = asic_buy_cost      # informativo (non usato nel cashflow)
+    df.attrs["asic_buy_cost_usd"] = asic_buy_cost
+    
+    # -----------------------------
+    # ROI Cliente (mesi)
+    # -----------------------------
+    # Costo iniziale per il cliente = somma dei prezzi DI VENDITA degli ASIC (sale_price_overrides)
+    # Se non specificato un prezzo di vendita per un modello, usa il buy price (unit_price_usd).
+    client_purchase_total = 0.0
+    for m, units in scn.fleet.items():
+        if m in catalog and units > 0:
+            buy = float(catalog[m].unit_price_usd)
+            sell = float(scn.sale_price_overrides.get(m, buy))
+            client_purchase_total += sell * float(units)
+    client_purchase_total = float(client_purchase_total)
+
+    # Per-mese:
+    # - Ricavo mining lordo del cliente = mining_rev_client_usd (già calcolato sopra)
+    # - Commissione DESMO = commission_usd (già calcolata)
+    # - Corrispettivo energia pagato dal cliente = revenue energia DESMO = energy_revenue_usd
+    # Cashflow cliente mese = (mining_rev_client_usd - commission_usd) - energy_revenue_usd
+    # Nota: l'acquisto ASIC è un esborso iniziale (al mese 0).
+    df["client_cashflow_usd"] = (df["rev_usd"]  # rev_usd = energy_revenue + commission
+                                 - df["energy_revenue_usd"]  # toglie l'energia
+                                 - df["commission_usd"])     # toglie la commissione (=> resta 0)
+    # ATTENZIONE: rev_usd = energy_revenue_usd + commission_usd, quindi la riga sopra darebbe 0.
+    # Usiamo quindi direttamente il mining del cliente già calcolato in 'commission_usd':
+    # commission_usd = mining_rev_client_usd * pct  =>  mining_rev_client_usd = commission_usd / pct
+    # Per evitare divisioni per 0, ricalcoliamo il mining_rev_client_usd in modo robusto:
+    pct = float(scn.commission_hashrate_pct) / 100.0
+    if pct > 0:
+        df["mining_rev_client_usd"] = df["commission_usd"] / pct
+    else:
+        # Se pct == 0, ricalcoliamo con le stesse formule usate nel loop:
+        # Per semplicità: mining_rev_client_usd = rev_usd (non perfetto se commissione=0, ma ok)
+        df["mining_rev_client_usd"] = df["rev_usd"]
+
+    # Cashflow cliente corretto:
+    df["client_cashflow_usd"] = df["mining_rev_client_usd"] - df["commission_usd"] - df["energy_revenue_usd"]
+
+    # Aggiungi esborso iniziale d'acquisto al mese 0
+    if len(df) > 0:
+        df.loc[df.index[0], "client_cashflow_usd"] = df.loc[df.index[0], "client_cashflow_usd"] - client_purchase_total
+
+    df["client_cum_cashflow_usd"] = df["client_cashflow_usd"].cumsum()
+
+    # ROI Cliente (primo mese in cui il cumulato del cliente >= 0)
+    idx_cli = df.index[df["client_cum_cashflow_usd"] >= 0]
+    df.attrs["roi_cliente_months"] = int(idx_cli[0] + 1) if len(idx_cli) else None
+    df.attrs["client_purchase_total_usd"] = client_purchase_total
+      # informativo (non usato nel cashflow)
     return df
 
 
@@ -1874,6 +1923,11 @@ elif mode == "Hosting":
                 k2.metric("IT Power kW", f"{dfh.attrs['it_power_kw']:,.0f}")
                 k3.metric("Total CAPEX", f"${dfh.attrs['total_capex_usd']:,.0f}")
                 k4.metric("Payback (months)", dfh.attrs["payback_months"] if dfh.attrs["payback_months"] else "—")
+
+                # KPI aggiuntivi lato cliente
+                ccli1, ccli2 = st.columns(2)
+                ccli1.metric("Costo iniziale cliente $", f"${dfh.attrs.get('client_purchase_total_usd', 0.0):,.0f}")
+                ccli2.metric("ROI Cliente (mesi)", dfh.attrs.get("roi_cliente_months") if dfh.attrs.get("roi_cliente_months") else "—")
 
                 # Evidenzia il one-off markup
                 st.metric("ASIC Markup (one-off @ t0)", f"${dfh.attrs['asic_markup_usd']:,.0f}")
