@@ -1756,26 +1756,27 @@ elif mode == "Hosting":
         st.session_state.hosting_scenarios: List[HostingScenario] = []  # type: ignore
 
     # --- Fleet hosted (units per model) ---
-    st.markdown("**Fleet ospitata (units per model)**")
-    fleet_counts_host: Dict[str, int] = {}
-    hcols = st.columns(3)
-    for i, model_name in enumerate(catalog.keys()):
-        key = f"fleet_host_{model_name}"
-        val = hcols[i % 3].number_input(
-            model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
-        )
-        fleet_counts_host[model_name] = int(val)
+    with st.expander("2) Fleet ospitata (units per model)", expanded=True):
+        st.markdown("**Fleet ospitata (units per model)**")
+        fleet_counts_host: Dict[str, int] = {}
+        hcols = st.columns(3)
+        for i, model_name in enumerate(catalog.keys()):
+            key = f"fleet_host_{model_name}"
+            val = hcols[i % 3].number_input(
+                model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
+            )
+            fleet_counts_host[model_name] = int(val)
 
-    # Metriche live
-    live_ths_h = sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_host.items() if m in catalog)
-    live_kw_h = sum(catalog[m].power_kw * n for m, n in fleet_counts_host.items() if m in catalog)
-    live_asic_cost_h = sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_host.items() if m in catalog)
+        # Metriche live
+        live_ths_h = sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_host.items() if m in catalog)
+        live_kw_h = sum(catalog[m].power_kw * n for m, n in fleet_counts_host.items() if m in catalog)
+        live_asic_cost_h = sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_host.items() if m in catalog)
 
-    mcols = st.columns(4)
-    mcols[0].metric("ASIC CAPEX (acquisto)", f"${live_asic_cost_h:,.0f}")
-    mcols[1].metric("Fleet TH/s (ospitata)", f"{live_ths_h:,.0f}")
-    mcols[2].metric("IT kW (ospitata)", f"{live_kw_h:,.0f}")
-    mcols[3].metric("$ per TH (acquisto)", f"${(live_asic_cost_h/live_ths_h):,.2f}" if live_ths_h>0 else "—")
+        mcols = st.columns(4)
+        mcols[0].metric("ASIC CAPEX (acquisto)", f"${live_asic_cost_h:,.0f}")
+        mcols[1].metric("Fleet TH/s (ospitata)", f"{live_ths_h:,.0f}")
+        mcols[2].metric("IT kW (ospitata)", f"{live_kw_h:,.0f}")
+        mcols[3].metric("$ per TH (acquisto)", f"${(live_asic_cost_h/live_ths_h):,.2f}" if live_ths_h>0 else "—")
 
     st.divider()
     with st.expander("**Prezzi di vendita ASIC (per modello)** — opzionale (default = costo acquisto)", expanded=False):
@@ -1816,42 +1817,43 @@ elif mode == "Hosting":
 
 
     # --- Form scenario hosting ---
-    with st.form("new_hosting_scenario"):
-        cols = st.columns(3)
-        name = cols[0].text_input("Name", value=f"Hosting {len(st.session_state.hosting_scenarios)+1}")
-        pue = cols[1].number_input("PUE", min_value=1.0, max_value=2.0, value=1.08, step=0.01, key="pue_host")
-        uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5, key="up_host")
+    with st.expander("4) Parametri scenario Hosting", expanded=True):
+        with st.form("new_hosting_scenario"):
+            cols = st.columns(3)
+            name = cols[0].text_input("Name", value=f"Hosting {len(st.session_state.hosting_scenarios)+1}")
+            pue = cols[1].number_input("PUE", min_value=1.0, max_value=2.0, value=1.08, step=0.01, key="pue_host")
+            uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5, key="up_host")
 
-        st.markdown("**Energia (USD/kWh)**")
-        e1, e2 = st.columns(2)
-        our_energy = e1.number_input("Nostro costo $/kWh", min_value=0.0, step=0.001, value=float(st.session_state.get("flat_price_cached", 0.05)), format="%.3f")
-        hosting_sell = e2.number_input("Prezzo Hosting $/kWh (vendita)", min_value=0.0, step=0.001, value=max(our_energy, 0.08), format="%.3f")
+            st.markdown("**Energia (USD/kWh)**")
+            e1, e2 = st.columns(2)
+            our_energy = e1.number_input("Nostro costo $/kWh", min_value=0.0, step=0.001, value=float(st.session_state.get("flat_price_cached", 0.05)), format="%.3f")
+            hosting_sell = e2.number_input("Prezzo Hosting $/kWh (vendita)", min_value=0.0, step=0.001, value=max(our_energy, 0.08), format="%.3f")
 
-        st.markdown("**OPEX e CAPEX (USD)**")
-        c1, c2, c3, c4 = st.columns(4)
-        fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0, key="fop_host")
-        capex_asics = c2.number_input("CAPEX ASICs (0 = calcola da catalogo)", min_value=0.0, step=1000.0, value=0.0, key="capexa_host")
-        capex_container = c3.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=60000.0, key="capexc_host")
-        capex_transformer = c4.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0, key="capext_host")
+            st.markdown("**OPEX e CAPEX (USD)**")
+            c1, c2, c3, c4 = st.columns(4)
+            fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0, key="fop_host")
+            capex_asics = c2.number_input("CAPEX ASICs (0 = calcola da catalogo)", min_value=0.0, step=1000.0, value=0.0, key="capexa_host")
+            capex_container = c3.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=60000.0, key="capexc_host")
+            capex_transformer = c4.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0, key="capext_host")
 
-        c5, c6 = st.columns(2)
-        other_capex = c5.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0, key="capexo_host")
-        commission_pct = c6.number_input("Commissione mining % su revenue cliente", min_value=0.0, max_value=100.0, step=0.5, value=1.0, key="comm_host")
+            c5, c6 = st.columns(2)
+            other_capex = c5.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0, key="capexo_host")
+            commission_pct = c6.number_input("Commissione mining % su revenue cliente", min_value=0.0, max_value=100.0, step=0.5, value=1.0, key="comm_host")
 
-        st.markdown("**Assunzioni finanziarie**")
-        f1, f2, f3 = st.columns(3)
-        btc_price_override = f1.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0, key="btc_host")
-        default_avg_fees_btc = float((avg_fees if avg_fees is not None else 0.0))
-        avg_fees_override = f2.number_input("Avg fees per block BTC", min_value=0.0, step=0.00000001, value=default_avg_fees_btc, format="%.8f", key="fees_host")
-        months_horizon = int(f3.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6, key="hor_host"))
-        public_box_host = st.checkbox("Salva scenario Hosting come pubblico", value=False, key="save_public_host")
-        author_name_host = st.text_input("Autore (facoltativo)", value="", key="author_host")
+            st.markdown("**Assunzioni finanziarie**")
+            f1, f2, f3 = st.columns(3)
+            btc_price_override = f1.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0, key="btc_host")
+            default_avg_fees_btc = float((avg_fees if avg_fees is not None else 0.0))
+            avg_fees_override = f2.number_input("Avg fees per block BTC", min_value=0.0, step=0.00000001, value=default_avg_fees_btc, format="%.8f", key="fees_host")
+            months_horizon = int(f3.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6, key="hor_host"))
+            public_box_host = st.checkbox("Salva scenario Hosting come pubblico", value=False, key="save_public_host")
+            author_name_host = st.text_input("Autore (facoltativo)", value="", key="author_host")
 
-        g1, g2 = st.columns(2)
-        monthly_net_growth = g1.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_host")
-        btc_price_mom = g2.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1, key="prg_host")
+            g1, g2 = st.columns(2)
+            monthly_net_growth = g1.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_host")
+            btc_price_mom = g2.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1, key="prg_host")
 
-        submitted_host = st.form_submit_button("➕ Add hosting scenario")
+            submitted_host = st.form_submit_button("➕ Add hosting scenario")
 
     if submitted_host:
         # Costruisci dizionario prezzi vendita (override)
