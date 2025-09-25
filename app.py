@@ -1247,7 +1247,7 @@ if mode == "Classica":
         else:
             st.error(f"⚠️ Fuori budget: mancano ${-delta:,.0f}")
 
-    # --- Form for the rest + submit ---
+  # --- Form for the rest + submit ---
     with st.expander("3) Parametri scenario", expanded=True):
         with st.form("new_scenario"):
             cols = st.columns(3)
@@ -1256,35 +1256,36 @@ if mode == "Classica":
             uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5)
 
             st.markdown("**Costs (USD)**")
-        c1, c2, c3, c4 = st.columns(4)
-        fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0)
-        var_price = c2.number_input("Variable $/kWh (scenario override)", min_value=0.0, step=0.001, value=float(flat_price), format="%.3f")
-        capex_asics = c3.number_input("CAPEX ASICs (0 = compute from catalog)", min_value=0.0, step=1000.0, value=0.0)
-        capex_container = c4.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=60000.0)
+            c1, c2, c3, c4 = st.columns(4)
+            fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0)
+            var_price = c2.number_input("Variable $/kWh (scenario override)", min_value=0.0, step=0.001, value=float(flat_price), format="%.3f")
+            capex_asics = c3.number_input("CAPEX ASICs (0 = compute from catalog)", min_value=0.0, step=1000.0, value=0.0)
+            capex_container = c4.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=60000.0)
 
-        c5, c6, c7, c8 = st.columns(4)
-        capex_transformer = c5.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0)
-        other_capex = c6.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0)
-        btc_price_override = c7.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0)
-        default_avg_fees_btc = float(avg_fees_1k[0]) if avg_fees_1k is not None else float(avg_fees or 0.0)
+            c5, c6, c7, c8 = st.columns(4)
+            capex_transformer = c5.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0)
+            other_capex = c6.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0)
+            btc_price_override = c7.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0)
+            default_avg_fees_btc = float(avg_fees_1k[0]) if avg_fees_1k is not None else float(avg_fees or 0.0)
 
-        avg_fees_override = c8.number_input(
-            "Avg fees per block BTC (valore live)",
-            min_value=0.0,
-            step=0.00000001,
-            value=default_avg_fees_btc,
-            format="%.8f",
-            key="avg_fees_override_classic",
-        )
+            avg_fees_override = c8.number_input(
+                "Avg fees per block BTC (valore live)",
+                min_value=0.0,
+                step=0.00000001,
+                value=default_avg_fees_btc,
+                format="%.8f",
+                key="avg_fees_override_classic",
+            )
 
-        c9, c10, c11 = st.columns(3)
-        monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1)
-        btc_price_mom = c10.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1)
-        months_horizon = int(c11.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6))
-        public_box = st.checkbox("Salva scenario come pubblico (visibile a tutti)", value=False, key="save_public_classic")
-        author_name = st.text_input("Autore (facoltativo)", value="", key="author_classic")
+            c9, c10, c11 = st.columns(3)
+            monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1)
+            btc_price_mom = c10.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1)
+            months_horizon = int(c11.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6))
+            public_box = st.checkbox("Salva scenario come pubblico (visibile a tutti)", value=False, key="save_public_classic")
+            author_name = st.text_input("Autore (facoltativo)", value="", key="author_classic")
 
-        submitted = st.form_submit_button("➕ Add scenario")
+            submitted = st.form_submit_button("➕ Add scenario")
+
 
     if submitted:
         scn = Scenario(
