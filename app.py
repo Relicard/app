@@ -1400,14 +1400,10 @@ if mode == "Classica":
             comp_df = pd.DataFrame(comp_rows)
             st.dataframe(comp_df, key="df_compare_classic")
 
-            if not comp_df.empty and "Cum CF @ 36m $" in comp_df.columns:
-                best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
-                if not best.empty:
-                    nameb = best.iloc[0]["Scenario"]
-                    st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
-            else:
-                st.info("⚠️ Nessun dato valido per calcolare il best scenario a 36 mesi")
-
+            best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
+            if not best.empty:
+                nameb = best.iloc[0]["Scenario"]
+                st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
 
         with st.expander("📚 Scenari pubblici (Classica)"):
             pub = list_public_scenarios("classica")
@@ -1718,14 +1714,10 @@ elif mode == "Prossimi Step":
                 comp_df = pd.DataFrame(comp_rows)
                 st.dataframe(comp_df, key="df_compare_classic")
 
-                if not comp_df.empty and "Cum CF @ 36m $" in comp_df.columns:
-                    best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
-                    if not best.empty:
-                        nameb = best.iloc[0]["Scenario"]
-                        st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
-                else:
-                    st.info("⚠️ Nessun dato valido per calcolare il best scenario a 36 mesi")
-
+                best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
+                if not best.empty:
+                    nameb = best.iloc[0]["Scenario"]
+                    st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
 
             with st.expander("📚 Scenari pubblici (Prossimi Step)"):
                 pub = list_public_scenarios("prossimi_step")  # <-- minuscolo + underscore
