@@ -1443,165 +1443,167 @@ elif mode == "Prossimi Step":
         st.session_state.future_steps: List[FutureStep] = [] # type: ignore
 
     # --- Fleet grid OUTSIDE the form for real-time budget calc (t0) ---
-    st.markdown("**Fleet (units per model) — t0**")
-    fleet_counts_ns: Dict[str, int] = {}
-    fcols_ns = st.columns(3)
-    for i, model_name in enumerate(catalog.keys()):
-        key = f"fleet_ns_{model_name}"
-        val = fcols_ns[i % 3].number_input(
-            model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
-        )
-        fleet_counts_ns[model_name] = int(val)
-
-    live_ths_ns, live_kw_ns, live_asic_capex_ns = ( 
-        sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_ns.items() if m in catalog),
-        sum(catalog[m].power_kw * n for m, n in fleet_counts_ns.items() if m in catalog),
-        sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_ns.items() if m in catalog),
-    )
-
-    calc_ns = st.columns(4)
-    calc_ns[0].metric("ASIC CAPEX stimato (t0)", f"${live_asic_capex_ns:,.0f}")
-    calc_ns[1].metric("Fleet TH/s (t0)", f"{live_ths_ns:,.0f}")
-    calc_ns[2].metric("IT kW (t0)", f"{live_kw_ns:,.0f}")
-    calc_ns[3].metric("$ per TH (t0)", f"${(live_asic_capex_ns/live_ths_ns):,.2f}" if live_ths_ns>0 else "—")
-
-    budget_ns = st.number_input("Budget ASICs t0 (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_ns", 0.0), key="budget_ns")
-    if budget_ns and budget_ns > 0:
-        delta = budget_ns - live_asic_capex_ns
-        if delta >= 0:
-            st.success(f"✅ Entro budget t0: residuo ${delta:,.0f}")
-        else:
-            st.error(f"⚠️ Fuori budget t0: mancano ${-delta:,.0f}")
-
-    # --- Base scenario form ---
-    with st.form("new_scenario_ns"):
-        st.markdown("**Add base scenario (t0)**")
-        cols = st.columns(3)
-        name = cols[0].text_input("Name", value=f"Plan {len(st.session_state.scenarios_ns)+1}")
-        pue = cols[1].number_input("PUE", min_value=1.0, max_value=2.0, value=1.08, step=0.01, key="pue_ns")
-        uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5, key="uptime_ns")
-
-        st.markdown("**Costs (USD)**")
-        c1, c2, c3, c4 = st.columns(4)
-        fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0, key="fop_ns")
-        var_price = c2.number_input("Variable $/kWh (scenario override)", min_value=0.0, step=0.001, value=float(flat_price), format="%.3f", key="varp_ns")
-        capex_asics = c3.number_input("CAPEX ASICs (0 = compute from catalog)", min_value=0.0, step=1000.0, value=0.0, key="ascc_ns")
-        capex_container = c4.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=60000.0, key="cont_ns")
-
-        c5, c6, c7, c8 = st.columns(4)
-        capex_transformer = c5.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0, key="trf_ns")
-        other_capex = c6.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0, key="oth_ns")
-        btc_price_override = c7.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0, key="btc_ns")
-        default_avg_fees_btc = float(avg_fees_1k[0]) if avg_fees_1k is not None else float(avg_fees or 0.0)
-
-        avg_fees_override = c8.number_input(
-            "Avg fees per block BTC (valore live)",
-            min_value=0.0,
-            step=0.00000001,
-            value=default_avg_fees_btc,
-            format="%.8f",
-            key="avg_fees_override_classic",
-        )
-
-        c9, c10, c11 = st.columns(3)
-        monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_ns")
-        btc_price_mom = c10.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1, key="prg_ns")
-        months_horizon = int(c11.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6, key="hor_ns"))
-        public_box_ns = st.checkbox("Salva base scenario t0 come pubblico", value=False, key="save_public_ns")
-        author_name_ns = st.text_input("Autore (facoltativo)", value="", key="author_ns")
-
-        submitted = st.form_submit_button("➕ Add base scenario (t0)")
-
-    if submitted:
-        scn = Scenario(
-            name=name,
-            fleet={k:int(v) for k,v in fleet_counts_ns.items() if int(v)>0},
-            pue=float(pue),
-            uptime_pct=float(uptime_pct),
-            fixed_opex_month_usd=float(fixed_opex),
-            variable_energy_usd_per_kwh=float(var_price),
-            capex_asics_usd=float(capex_asics),
-            capex_container_usd=float(capex_container),
-            capex_transformer_usd=float(capex_transformer),
-            other_capex_usd=float(other_capex),
-            btc_price_override=float(btc_price_override) if btc_price_override>0 else None,
-            avg_fees_per_block_btc_override=float(avg_fees_override) if avg_fees_override>0 else None,
-            monthly_network_growth_pct=float(monthly_net_growth),
-            btc_price_monthly_growth_pct=float(btc_price_mom),
-            months_horizon=int(months_horizon),
-        )
-        st.session_state.scenarios_ns.append(scn)
-        st.success(f"Added {scn.name} ✅")
-
-        if public_box_ns:
-            author = author_name_ns.strip() or "anonymous"
-            payload = scenario_to_public_dict(scn, catalog, author=author)
-            save_public_scenario("prossimi_step", payload)
-            st.success("Scenario t0 pubblicato ✅")
-
-    if not st.session_state.scenarios_ns:
-        st.info("Aggiungi almeno uno scenario base t0 per definire i *Prossimi Step* qui sotto.")
-    else:
-        st.subheader("3) Future Steps (applicati da t+N)")
-        st.caption("Gli step **aggiungono** fleet e CAPEX nel mese di applicazione; eventuali override si applicano da quel mese in poi.")
-
-        # --- Fleet grid OUTSIDE the form for real-time budget calc (step) ---
-        st.markdown("**Fleet da aggiungere nello Step**")
-        fleet_counts_step_live: Dict[str, int] = {}
-        fcols_step = st.columns(3)
+    with st.expander("2) Fleet (units per model) — t0", expanded=True):
+        fleet_counts_ns: Dict[str, int] = {}
+        fcols_ns = st.columns(3)
         for i, model_name in enumerate(catalog.keys()):
-            key = f"step_{model_name}"
-            val = fcols_step[i % 3].number_input(
+            key = f"fleet_ns_{model_name}"
+            val = fcols_ns[i % 3].number_input(
                 model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
             )
-            fleet_counts_step_live[model_name] = int(val)
+            fleet_counts_ns[model_name] = int(val)
 
-        live_ths_step, live_kw_step, live_asic_capex_step = (
-            sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_step_live.items() if m in catalog),
-            sum(catalog[m].power_kw * n for m, n in fleet_counts_step_live.items() if m in catalog),
-            sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_step_live.items() if m in catalog),
+        live_ths_ns, live_kw_ns, live_asic_capex_ns = ( 
+            sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_ns.items() if m in catalog),
+            sum(catalog[m].power_kw * n for m, n in fleet_counts_ns.items() if m in catalog),
+            sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_ns.items() if m in catalog),
         )
-        calc_step = st.columns(4)
-        calc_step[0].metric("ASIC CAPEX stimato (step)", f"${live_asic_capex_step:,.0f}")
-        calc_step[1].metric("TH/s aggiunti (step)", f"{live_ths_step:,.0f}")
-        calc_step[2].metric("IT kW aggiunti (step)", f"{live_kw_step:,.0f}")
-        calc_step[3].metric("$ per TH (step)", f"${(live_asic_capex_step/live_ths_step):,.2f}" if live_ths_step>0 else "—")
 
-        budget_step = st.number_input("Budget ASICs per step (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_step", 0.0), key="budget_step")
-        if budget_step and budget_step > 0:
-            delta = budget_step - live_asic_capex_step
+        calc_ns = st.columns(4)
+        calc_ns[0].metric("ASIC CAPEX stimato (t0)", f"${live_asic_capex_ns:,.0f}")
+        calc_ns[1].metric("Fleet TH/s (t0)", f"{live_ths_ns:,.0f}")
+        calc_ns[2].metric("IT kW (t0)", f"{live_kw_ns:,.0f}")
+        calc_ns[3].metric("$ per TH (t0)", f"${(live_asic_capex_ns/live_ths_ns):,.2f}" if live_ths_ns>0 else "—")
+
+        budget_ns = st.number_input("Budget ASICs t0 (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_ns", 0.0), key="budget_ns")
+        if budget_ns and budget_ns > 0:
+            delta = budget_ns - live_asic_capex_ns
             if delta >= 0:
-                st.success(f"✅ Entro budget step: residuo ${delta:,.0f}")
+                st.success(f"✅ Entro budget t0: residuo ${delta:,.0f}")
             else:
-                st.error(f"⚠️ Fuori budget step: mancano ${-delta:,.0f}")
+                st.error(f"⚠️ Fuori budget t0: mancano ${-delta:,.0f}")
+
+    # --- Base scenario form ---
+    with st.expander("3) Parametri scenario base (t0)", expanded=True):
+        with st.form("new_scenario_ns"):
+            st.markdown("**Add base scenario (t0)**")
+            cols = st.columns(3)
+            name = cols[0].text_input("Name", value=f"Plan {len(st.session_state.scenarios_ns)+1}")
+            pue = cols[1].number_input("PUE", min_value=1.0, max_value=2.0, value=1.08, step=0.01, key="pue_ns")
+            uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5, key="uptime_ns")
+
+            st.markdown("**Costs (USD)**")
+            c1, c2, c3, c4 = st.columns(4)
+            fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0, key="fop_ns")
+            var_price = c2.number_input("Variable $/kWh (scenario override)", min_value=0.0, step=0.001, value=float(flat_price), format="%.3f", key="varp_ns")
+            capex_asics = c3.number_input("CAPEX ASICs (0 = compute from catalog)", min_value=0.0, step=1000.0, value=0.0, key="ascc_ns")
+            capex_container = c4.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=60000.0, key="cont_ns")
+
+            c5, c6, c7, c8 = st.columns(4)
+            capex_transformer = c5.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0, key="trf_ns")
+            other_capex = c6.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0, key="oth_ns")
+            btc_price_override = c7.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0, key="btc_ns")
+            default_avg_fees_btc = float(avg_fees_1k[0]) if avg_fees_1k is not None else float(avg_fees or 0.0)
+
+            avg_fees_override = c8.number_input(
+                "Avg fees per block BTC (valore live)",
+                min_value=0.0,
+                step=0.00000001,
+                value=default_avg_fees_btc,
+                format="%.8f",
+                key="avg_fees_override_classic",
+            )
+
+            c9, c10, c11 = st.columns(3)
+            monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_ns")
+            btc_price_mom = c10.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1, key="prg_ns")
+            months_horizon = int(c11.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6, key="hor_ns"))
+            public_box_ns = st.checkbox("Salva base scenario t0 come pubblico", value=False, key="save_public_ns")
+            author_name_ns = st.text_input("Autore (facoltativo)", value="", key="author_ns")
+
+            submitted = st.form_submit_button("➕ Add base scenario (t0)")
+
+        if submitted:
+            scn = Scenario(
+                name=name,
+                fleet={k:int(v) for k,v in fleet_counts_ns.items() if int(v)>0},
+                pue=float(pue),
+                uptime_pct=float(uptime_pct),
+                fixed_opex_month_usd=float(fixed_opex),
+                variable_energy_usd_per_kwh=float(var_price),
+                capex_asics_usd=float(capex_asics),
+                capex_container_usd=float(capex_container),
+                capex_transformer_usd=float(capex_transformer),
+                other_capex_usd=float(other_capex),
+                btc_price_override=float(btc_price_override) if btc_price_override>0 else None,
+                avg_fees_per_block_btc_override=float(avg_fees_override) if avg_fees_override>0 else None,
+                monthly_network_growth_pct=float(monthly_net_growth),
+                btc_price_monthly_growth_pct=float(btc_price_mom),
+                months_horizon=int(months_horizon),
+            )
+            st.session_state.scenarios_ns.append(scn)
+            st.success(f"Added {scn.name} ✅")
+
+            if public_box_ns:
+                author = author_name_ns.strip() or "anonymous"
+                payload = scenario_to_public_dict(scn, catalog, author=author)
+                save_public_scenario("prossimi_step", payload)
+                st.success("Scenario t0 pubblicato ✅")
+
+        if not st.session_state.scenarios_ns:
+            st.info("Aggiungi almeno uno scenario base t0 per definire i *Prossimi Step* qui sotto.")
+        else:
+            st.subheader("3) Future Steps (applicati da t+N)")
+            st.caption("Gli step **aggiungono** fleet e CAPEX nel mese di applicazione; eventuali override si applicano da quel mese in poi.")
+
+            # --- Fleet grid OUTSIDE the form for real-time budget calc (step) ---
+            st.markdown("**Fleet da aggiungere nello Step**")
+            fleet_counts_step_live: Dict[str, int] = {}
+            fcols_step = st.columns(3)
+            for i, model_name in enumerate(catalog.keys()):
+                key = f"step_{model_name}"
+                val = fcols_step[i % 3].number_input(
+                    model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
+                )
+                fleet_counts_step_live[model_name] = int(val)
+
+            live_ths_step, live_kw_step, live_asic_capex_step = (
+                sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_step_live.items() if m in catalog),
+                sum(catalog[m].power_kw * n for m, n in fleet_counts_step_live.items() if m in catalog),
+                sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_step_live.items() if m in catalog),
+            )
+            calc_step = st.columns(4)
+            calc_step[0].metric("ASIC CAPEX stimato (step)", f"${live_asic_capex_step:,.0f}")
+            calc_step[1].metric("TH/s aggiunti (step)", f"{live_ths_step:,.0f}")
+            calc_step[2].metric("IT kW aggiunti (step)", f"{live_kw_step:,.0f}")
+            calc_step[3].metric("$ per TH (step)", f"${(live_asic_capex_step/live_ths_step):,.2f}" if live_ths_step>0 else "—")
+
+            budget_step = st.number_input("Budget ASICs per step (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_step", 0.0), key="budget_step")
+            if budget_step and budget_step > 0:
+                delta = budget_step - live_asic_capex_step
+                if delta >= 0:
+                    st.success(f"✅ Entro budget step: residuo ${delta:,.0f}")
+                else:
+                    st.error(f"⚠️ Fuori budget step: mancano ${-delta:,.0f}")
 
         # --- Step form ---
-        with st.form("new_future_step"):
-            scn_names = [s.name for s in st.session_state.scenarios_ns]
-            target_scn = st.selectbox("Scenario target", scn_names)
-            month_offset = st.number_input("Applica da mese (t+N)", min_value=1, max_value=240, value=4, step=1)
+        with st.expander("4) Future Steps (aggiunte + override)", expanded=True):
+            with st.form("new_future_step"):
+                scn_names = [s.name for s in st.session_state.scenarios_ns]
+                target_scn = st.selectbox("Scenario target", scn_names)
+                month_offset = st.number_input("Applica da mese (t+N)", min_value=1, max_value=240, value=4, step=1)
 
-            st.markdown("**CAPEX dello step (USD)**")
-            cc1, cc2, cc3, cc4 = st.columns(4)
-            s_capex_asics = cc1.number_input("CAPEX ASICs (0 = compute da catalogo)", min_value=0.0, step=1000.0, value=0.0, key="sc_asics")
-            s_capex_container = cc2.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=0.0, key="sc_cont")
-            s_capex_transformer = cc3.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=0.0, key="sc_trf")
-            s_other_capex = cc4.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=0.0, key="sc_other")
+                st.markdown("**CAPEX dello step (USD)**")
+                cc1, cc2, cc3, cc4 = st.columns(4)
+                s_capex_asics = cc1.number_input("CAPEX ASICs (0 = compute da catalogo)", min_value=0.0, step=1000.0, value=0.0, key="sc_asics")
+                s_capex_container = cc2.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=0.0, key="sc_cont")
+                s_capex_transformer = cc3.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=0.0, key="sc_trf")
+                s_other_capex = cc4.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=0.0, key="sc_other")
 
-            st.markdown("**Override opzionali (lascia vuoto = eredita)**")
-            oo1, oo2, oo3 = st.columns(3)
-            s_pue = oo1.text_input("PUE (es. 1.08)", value="")
-            s_uptime = oo2.text_input("Uptime % (es. 97)", value="")
-            s_var_price = oo3.text_input("Variable $/kWh (es. 0.05)", value="")
-            oo4, oo5, oo6 = st.columns(3)
-            s_fixed_opex = oo4.text_input("Fixed OPEX / month", value="")
-            s_btc_override = oo5.text_input("BTC price override", value="")
-            s_fees_override = oo6.text_input("Avg fees / block BTC", value="")
-            oo7, oo8 = st.columns(2)
-            s_nh_growth = oo7.text_input("Network growth %/m", value="")
-            s_price_growth = oo8.text_input("BTC price growth %/m", value="")
+                st.markdown("**Override opzionali (lascia vuoto = eredita)**")
+                oo1, oo2, oo3 = st.columns(3)
+                s_pue = oo1.text_input("PUE (es. 1.08)", value="")
+                s_uptime = oo2.text_input("Uptime % (es. 97)", value="")
+                s_var_price = oo3.text_input("Variable $/kWh (es. 0.05)", value="")
+                oo4, oo5, oo6 = st.columns(3)
+                s_fixed_opex = oo4.text_input("Fixed OPEX / month", value="")
+                s_btc_override = oo5.text_input("BTC price override", value="")
+                s_fees_override = oo6.text_input("Avg fees / block BTC", value="")
+                oo7, oo8 = st.columns(2)
+                s_nh_growth = oo7.text_input("Network growth %/m", value="")
+                s_price_growth = oo8.text_input("BTC price growth %/m", value="")
 
-            submitted_step = st.form_submit_button("➕ Add future step")
+                submitted_step = st.form_submit_button("➕ Add future step")
 
         if submitted_step:
             def opt_float(x: str) -> Optional[float]:
