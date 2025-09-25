@@ -1213,7 +1213,7 @@ if mode == "Classica":
     if "scenarios" not in st.session_state:
         st.session_state.scenarios: List[Scenario] = [] # type: ignore
     
-    with st.expander("2) Fleet (units per model)", expanded=True):
+    with st.expander("2) Fleet (units per model)", expanded=False):
         fleet_counts_classic: Dict[str, int] = {}
         fleet_cols = st.columns(3)
         for i, model_name in enumerate(catalog.keys()):
@@ -1248,7 +1248,7 @@ if mode == "Classica":
             st.error(f"⚠️ Fuori budget: mancano ${-delta:,.0f}")
 
   # --- Form for the rest + submit ---
-    with st.expander("3) Parametri scenario", expanded=True):
+    with st.expander("3) Parametri scenario", expanded=False):
         with st.form("new_scenario"):
             cols = st.columns(3)
             name = cols[0].text_input("Name", value=f"Scenario {len(st.session_state.scenarios)+1}")
@@ -1443,7 +1443,7 @@ elif mode == "Prossimi Step":
         st.session_state.future_steps: List[FutureStep] = [] # type: ignore
 
     # --- Fleet grid OUTSIDE the form for real-time budget calc (t0) ---
-    with st.expander("2) Fleet (units per model) — t0", expanded=True):
+    with st.expander("2) Fleet (units per model) — t0", expanded=False):
         fleet_counts_ns: Dict[str, int] = {}
         fcols_ns = st.columns(3)
         for i, model_name in enumerate(catalog.keys()):
@@ -1474,7 +1474,7 @@ elif mode == "Prossimi Step":
             st.error(f"⚠️ Fuori budget t0: mancano ${-delta:,.0f}")
 
     # --- Base scenario form ---
-    with st.expander("3) Parametri scenario base (t0)", expanded=True):
+    with st.expander("3) Parametri scenario base (t0)", expanded=False):
         with st.form("new_scenario_ns"):
             st.markdown("**Add base scenario (t0)**")
             cols = st.columns(3)
@@ -1577,7 +1577,7 @@ elif mode == "Prossimi Step":
                 st.error(f"⚠️ Fuori budget step: mancano ${-delta:,.0f}")
 
         # --- Step form ---
-        with st.expander("4) Future Steps (aggiunte + override)", expanded=True):
+        with st.expander("4) Future Steps (aggiunte + override)", expanded=False):
             with st.form("new_future_step"):
                 scn_names = [s.name for s in st.session_state.scenarios_ns]
                 target_scn = st.selectbox("Scenario target", scn_names)
@@ -1756,7 +1756,7 @@ elif mode == "Hosting":
         st.session_state.hosting_scenarios: List[HostingScenario] = []  # type: ignore
 
     # --- Fleet hosted (units per model) ---
-    with st.expander("2) Fleet ospitata (units per model)", expanded=True):
+    with st.expander("2) Fleet ospitata (units per model)", expanded=False):
         st.markdown("**Fleet ospitata (units per model)**")
         fleet_counts_host: Dict[str, int] = {}
         hcols = st.columns(3)
@@ -1817,7 +1817,7 @@ elif mode == "Hosting":
 
 
     # --- Form scenario hosting ---
-    with st.expander("4) Parametri scenario Hosting", expanded=True):
+    with st.expander("4) Parametri scenario Hosting", expanded=False):
         with st.form("new_hosting_scenario"):
             cols = st.columns(3)
             name = cols[0].text_input("Name", value=f"Hosting {len(st.session_state.hosting_scenarios)+1}")
