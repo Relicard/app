@@ -1248,8 +1248,8 @@ if mode == "Classica":
                 st.error(f"⚠️ Fuori budget: mancano ${-delta:,.0f}")
 
   # --- Form for the rest + submit ---
+    st.subheader("3) Parametri")
     with st.expander("3) Parametri scenario", expanded=False):
-        st.subheader("3) Parametri")
         with st.form("new_scenario"):
             cols = st.columns(3)
             name = cols[0].text_input("Name", value=f"Scenario {len(st.session_state.scenarios)+1}")
