@@ -1577,32 +1577,33 @@ elif mode == "Prossimi Step":
                 st.error(f"⚠️ Fuori budget step: mancano ${-delta:,.0f}")
 
         # --- Step form ---
-        with st.form("new_future_step"):
-            scn_names = [s.name for s in st.session_state.scenarios_ns]
-            target_scn = st.selectbox("Scenario target", scn_names)
-            month_offset = st.number_input("Applica da mese (t+N)", min_value=1, max_value=240, value=4, step=1)
+        with st.expander("4) Future Steps (aggiunte + override)", expanded=True):
+            with st.form("new_future_step"):
+                scn_names = [s.name for s in st.session_state.scenarios_ns]
+                target_scn = st.selectbox("Scenario target", scn_names)
+                month_offset = st.number_input("Applica da mese (t+N)", min_value=1, max_value=240, value=4, step=1)
 
-            st.markdown("**CAPEX dello step (USD)**")
-            cc1, cc2, cc3, cc4 = st.columns(4)
-            s_capex_asics = cc1.number_input("CAPEX ASICs (0 = compute da catalogo)", min_value=0.0, step=1000.0, value=0.0, key="sc_asics")
-            s_capex_container = cc2.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=0.0, key="sc_cont")
-            s_capex_transformer = cc3.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=0.0, key="sc_trf")
-            s_other_capex = cc4.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=0.0, key="sc_other")
+                st.markdown("**CAPEX dello step (USD)**")
+                cc1, cc2, cc3, cc4 = st.columns(4)
+                s_capex_asics = cc1.number_input("CAPEX ASICs (0 = compute da catalogo)", min_value=0.0, step=1000.0, value=0.0, key="sc_asics")
+                s_capex_container = cc2.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=0.0, key="sc_cont")
+                s_capex_transformer = cc3.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=0.0, key="sc_trf")
+                s_other_capex = cc4.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=0.0, key="sc_other")
 
-            st.markdown("**Override opzionali (lascia vuoto = eredita)**")
-            oo1, oo2, oo3 = st.columns(3)
-            s_pue = oo1.text_input("PUE (es. 1.08)", value="")
-            s_uptime = oo2.text_input("Uptime % (es. 97)", value="")
-            s_var_price = oo3.text_input("Variable $/kWh (es. 0.05)", value="")
-            oo4, oo5, oo6 = st.columns(3)
-            s_fixed_opex = oo4.text_input("Fixed OPEX / month", value="")
-            s_btc_override = oo5.text_input("BTC price override", value="")
-            s_fees_override = oo6.text_input("Avg fees / block BTC", value="")
-            oo7, oo8 = st.columns(2)
-            s_nh_growth = oo7.text_input("Network growth %/m", value="")
-            s_price_growth = oo8.text_input("BTC price growth %/m", value="")
+                st.markdown("**Override opzionali (lascia vuoto = eredita)**")
+                oo1, oo2, oo3 = st.columns(3)
+                s_pue = oo1.text_input("PUE (es. 1.08)", value="")
+                s_uptime = oo2.text_input("Uptime % (es. 97)", value="")
+                s_var_price = oo3.text_input("Variable $/kWh (es. 0.05)", value="")
+                oo4, oo5, oo6 = st.columns(3)
+                s_fixed_opex = oo4.text_input("Fixed OPEX / month", value="")
+                s_btc_override = oo5.text_input("BTC price override", value="")
+                s_fees_override = oo6.text_input("Avg fees / block BTC", value="")
+                oo7, oo8 = st.columns(2)
+                s_nh_growth = oo7.text_input("Network growth %/m", value="")
+                s_price_growth = oo8.text_input("BTC price growth %/m", value="")
 
-            submitted_step = st.form_submit_button("➕ Add future step")
+                submitted_step = st.form_submit_button("➕ Add future step")
 
         if submitted_step:
             def opt_float(x: str) -> Optional[float]:
