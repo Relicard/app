@@ -117,11 +117,17 @@ def fetch_ercot_last_24h(api_key: str, location: str) -> pd.DataFrame:
     Scarica i prezzi ERCOT RTM ($/kWh) per le ultime 24h dal dataset GridStatus.
     """
     url = "https://api.gridstatus.io/v1/datasets/ercot_lmp_by_settlement_point/query"
+
+    # Calcolo finestra temporale ISO (UTC)
+    end = datetime.utcnow()
+    start = end - timedelta(hours=24)
+
     params = {
-        "api_key": api_key,          # <-- API key passata come query param (non header)
+        "api_key": api_key,
         "filter_column": "location",
         "filter_value": location,
-        "time": "last_24h",
+        "start": start.isoformat(timespec="seconds") + "Z",
+        "end": end.isoformat(timespec="seconds") + "Z",
         "limit": 5000
     }
 
@@ -140,6 +146,7 @@ def fetch_ercot_last_24h(api_key: str, location: str) -> pd.DataFrame:
     except Exception as e:
         st.error(f"Errore fetch_ercot_last_24h: {e}")
         return pd.DataFrame()
+
 
 
 
