@@ -1224,28 +1224,28 @@ if mode == "Classica":
             fleet_counts_classic[model_name] = int(val)
 
 
-    # Real-time ASIC budget & live metrics
-    def _fleet_sum(catalog, counts):
-        ths = sum(catalog[m].hashrate_ths * n for m, n in counts.items() if m in catalog)
-        kw = sum(catalog[m].power_kw * n for m, n in counts.items() if m in catalog)
-        cap = sum(catalog[m].unit_price_usd * n for m, n in counts.items() if m in catalog)
-        return float(ths), float(kw), float(cap)
+        # Real-time ASIC budget & live metrics
+        def _fleet_sum(catalog, counts):
+            ths = sum(catalog[m].hashrate_ths * n for m, n in counts.items() if m in catalog)
+            kw = sum(catalog[m].power_kw * n for m, n in counts.items() if m in catalog)
+            cap = sum(catalog[m].unit_price_usd * n for m, n in counts.items() if m in catalog)
+            return float(ths), float(kw), float(cap)
 
-    live_ths, live_kw, live_asic_capex = _fleet_sum(catalog, fleet_counts_classic)
+        live_ths, live_kw, live_asic_capex = _fleet_sum(catalog, fleet_counts_classic)
 
-    calc_cols = st.columns(4)
-    calc_cols[0].metric("ASIC CAPEX stimato", f"${live_asic_capex:,.0f}")
-    calc_cols[1].metric("Fleet TH/s (selezionata)", f"{live_ths:,.0f}")
-    calc_cols[2].metric("IT kW (stimati)", f"{live_kw:,.0f}")
-    calc_cols[3].metric("$ per TH", f"${(live_asic_capex/live_ths):,.2f}" if live_ths > 0 else "—")
+        calc_cols = st.columns(4)
+        calc_cols[0].metric("ASIC CAPEX stimato", f"${live_asic_capex:,.0f}")
+        calc_cols[1].metric("Fleet TH/s (selezionata)", f"{live_ths:,.0f}")
+        calc_cols[2].metric("IT kW (stimati)", f"{live_kw:,.0f}")
+        calc_cols[3].metric("$ per TH", f"${(live_asic_capex/live_ths):,.2f}" if live_ths > 0 else "—")
 
-    budget_classic = st.number_input("Budget ASICs (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_classic", 0.0), key="budget_classic")
-    if budget_classic and budget_classic > 0:
-        delta = budget_classic - live_asic_capex
-        if delta >= 0:
-            st.success(f"✅ Entro budget: residuo ${delta:,.0f}")
-        else:
-            st.error(f"⚠️ Fuori budget: mancano ${-delta:,.0f}")
+        budget_classic = st.number_input("Budget ASICs (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_classic", 0.0), key="budget_classic")
+        if budget_classic and budget_classic > 0:
+            delta = budget_classic - live_asic_capex
+            if delta >= 0:
+                st.success(f"✅ Entro budget: residuo ${delta:,.0f}")
+            else:
+                st.error(f"⚠️ Fuori budget: mancano ${-delta:,.0f}")
 
   # --- Form for the rest + submit ---
     with st.expander("3) Parametri scenario", expanded=False):
