@@ -1295,7 +1295,7 @@ with st.sidebar:
         if st.checkbox("📊 Mostra ultime 24h (API live)"):
             df_24h = fetch_ercot_last_24h(GRIDSTATUS_API_KEY, location)
             if not df_24h.empty:
-                st.dataframe(df_24h.tail(48))  # mostra ultime 48 rilevazioni (≈12h se intervallo 15min, ≈4h se 5min)
+                st.dataframe(df_24h)  # mostra ultime 48 rilevazioni (≈12h se intervallo 15min, ≈4h se 5min)
                 fig24 = go.Figure()
                 fig24.add_trace(go.Scatter(
                     x=df_24h["timestamp"],
