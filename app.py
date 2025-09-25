@@ -1443,307 +1443,305 @@ elif mode == "Prossimi Step":
         st.session_state.future_steps: List[FutureStep] = [] # type: ignore
 
     # --- Fleet grid OUTSIDE the form for real-time budget calc (t0) ---
-    with st.expander("2) Fleet (units per model) — t0", expanded=True):
-        fleet_counts_ns: Dict[str, int] = {}
-        fcols_ns = st.columns(3)
-        for i, model_name in enumerate(catalog.keys()):
-            key = f"fleet_ns_{model_name}"
-            val = fcols_ns[i % 3].number_input(
-                model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
-            )
-            fleet_counts_ns[model_name] = int(val)
-
-        live_ths_ns, live_kw_ns, live_asic_capex_ns = ( 
-            sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_ns.items() if m in catalog),
-            sum(catalog[m].power_kw * n for m, n in fleet_counts_ns.items() if m in catalog),
-            sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_ns.items() if m in catalog),
+    st.markdown("**Fleet (units per model) — t0**")
+    fleet_counts_ns: Dict[str, int] = {}
+    fcols_ns = st.columns(3)
+    for i, model_name in enumerate(catalog.keys()):
+        key = f"fleet_ns_{model_name}"
+        val = fcols_ns[i % 3].number_input(
+            model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
         )
+        fleet_counts_ns[model_name] = int(val)
 
-        calc_ns = st.columns(4)
-        calc_ns[0].metric("ASIC CAPEX stimato (t0)", f"${live_asic_capex_ns:,.0f}")
-        calc_ns[1].metric("Fleet TH/s (t0)", f"{live_ths_ns:,.0f}")
-        calc_ns[2].metric("IT kW (t0)", f"{live_kw_ns:,.0f}")
-        calc_ns[3].metric("$ per TH (t0)", f"${(live_asic_capex_ns/live_ths_ns):,.2f}" if live_ths_ns>0 else "—")
+    live_ths_ns, live_kw_ns, live_asic_capex_ns = ( 
+        sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_ns.items() if m in catalog),
+        sum(catalog[m].power_kw * n for m, n in fleet_counts_ns.items() if m in catalog),
+        sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_ns.items() if m in catalog),
+    )
 
-        budget_ns = st.number_input("Budget ASICs t0 (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_ns", 0.0), key="budget_ns")
-        if budget_ns and budget_ns > 0:
-            delta = budget_ns - live_asic_capex_ns
-            if delta >= 0:
-                st.success(f"✅ Entro budget t0: residuo ${delta:,.0f}")
-            else:
-                st.error(f"⚠️ Fuori budget t0: mancano ${-delta:,.0f}")
+    calc_ns = st.columns(4)
+    calc_ns[0].metric("ASIC CAPEX stimato (t0)", f"${live_asic_capex_ns:,.0f}")
+    calc_ns[1].metric("Fleet TH/s (t0)", f"{live_ths_ns:,.0f}")
+    calc_ns[2].metric("IT kW (t0)", f"{live_kw_ns:,.0f}")
+    calc_ns[3].metric("$ per TH (t0)", f"${(live_asic_capex_ns/live_ths_ns):,.2f}" if live_ths_ns>0 else "—")
+
+    budget_ns = st.number_input("Budget ASICs t0 (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_ns", 0.0), key="budget_ns")
+    if budget_ns and budget_ns > 0:
+        delta = budget_ns - live_asic_capex_ns
+        if delta >= 0:
+            st.success(f"✅ Entro budget t0: residuo ${delta:,.0f}")
+        else:
+            st.error(f"⚠️ Fuori budget t0: mancano ${-delta:,.0f}")
 
     # --- Base scenario form ---
-    with st.expander("3) Parametri scenario base (t0)", expanded=True):
-        with st.form("new_scenario_ns"):
-            st.markdown("**Add base scenario (t0)**")
-            cols = st.columns(3)
-            name = cols[0].text_input("Name", value=f"Plan {len(st.session_state.scenarios_ns)+1}")
-            pue = cols[1].number_input("PUE", min_value=1.0, max_value=2.0, value=1.08, step=0.01, key="pue_ns")
-            uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5, key="uptime_ns")
+    with st.form("new_scenario_ns"):
+        st.markdown("**Add base scenario (t0)**")
+        cols = st.columns(3)
+        name = cols[0].text_input("Name", value=f"Plan {len(st.session_state.scenarios_ns)+1}")
+        pue = cols[1].number_input("PUE", min_value=1.0, max_value=2.0, value=1.08, step=0.01, key="pue_ns")
+        uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5, key="uptime_ns")
 
-            st.markdown("**Costs (USD)**")
-            c1, c2, c3, c4 = st.columns(4)
-            fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0, key="fop_ns")
-            var_price = c2.number_input("Variable $/kWh (scenario override)", min_value=0.0, step=0.001, value=float(flat_price), format="%.3f", key="varp_ns")
-            capex_asics = c3.number_input("CAPEX ASICs (0 = compute from catalog)", min_value=0.0, step=1000.0, value=0.0, key="ascc_ns")
-            capex_container = c4.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=60000.0, key="cont_ns")
+        st.markdown("**Costs (USD)**")
+        c1, c2, c3, c4 = st.columns(4)
+        fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0, key="fop_ns")
+        var_price = c2.number_input("Variable $/kWh (scenario override)", min_value=0.0, step=0.001, value=float(flat_price), format="%.3f", key="varp_ns")
+        capex_asics = c3.number_input("CAPEX ASICs (0 = compute from catalog)", min_value=0.0, step=1000.0, value=0.0, key="ascc_ns")
+        capex_container = c4.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=60000.0, key="cont_ns")
 
-            c5, c6, c7, c8 = st.columns(4)
-            capex_transformer = c5.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0, key="trf_ns")
-            other_capex = c6.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0, key="oth_ns")
-            btc_price_override = c7.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0, key="btc_ns")
-            default_avg_fees_btc = float(avg_fees_1k[0]) if avg_fees_1k is not None else float(avg_fees or 0.0)
+        c5, c6, c7, c8 = st.columns(4)
+        capex_transformer = c5.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0, key="trf_ns")
+        other_capex = c6.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0, key="oth_ns")
+        btc_price_override = c7.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0, key="btc_ns")
+        default_avg_fees_btc = float(avg_fees_1k[0]) if avg_fees_1k is not None else float(avg_fees or 0.0)
 
-            avg_fees_override = c8.number_input(
-                "Avg fees per block BTC (valore live)",
-                min_value=0.0,
-                step=0.00000001,
-                value=default_avg_fees_btc,
-                format="%.8f",
-                key="avg_fees_override_classic",
+        avg_fees_override = c8.number_input(
+            "Avg fees per block BTC (valore live)",
+            min_value=0.0,
+            step=0.00000001,
+            value=default_avg_fees_btc,
+            format="%.8f",
+            key="avg_fees_override_classic",
+        )
+
+        c9, c10, c11 = st.columns(3)
+        monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_ns")
+        btc_price_mom = c10.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1, key="prg_ns")
+        months_horizon = int(c11.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6, key="hor_ns"))
+        public_box_ns = st.checkbox("Salva base scenario t0 come pubblico", value=False, key="save_public_ns")
+        author_name_ns = st.text_input("Autore (facoltativo)", value="", key="author_ns")
+
+        submitted = st.form_submit_button("➕ Add base scenario (t0)")
+
+    if submitted:
+        scn = Scenario(
+            name=name,
+            fleet={k:int(v) for k,v in fleet_counts_ns.items() if int(v)>0},
+            pue=float(pue),
+            uptime_pct=float(uptime_pct),
+            fixed_opex_month_usd=float(fixed_opex),
+            variable_energy_usd_per_kwh=float(var_price),
+            capex_asics_usd=float(capex_asics),
+            capex_container_usd=float(capex_container),
+            capex_transformer_usd=float(capex_transformer),
+            other_capex_usd=float(other_capex),
+            btc_price_override=float(btc_price_override) if btc_price_override>0 else None,
+            avg_fees_per_block_btc_override=float(avg_fees_override) if avg_fees_override>0 else None,
+            monthly_network_growth_pct=float(monthly_net_growth),
+            btc_price_monthly_growth_pct=float(btc_price_mom),
+            months_horizon=int(months_horizon),
+        )
+        st.session_state.scenarios_ns.append(scn)
+        st.success(f"Added {scn.name} ✅")
+
+        if public_box_ns:
+            author = author_name_ns.strip() or "anonymous"
+            payload = scenario_to_public_dict(scn, catalog, author=author)
+            save_public_scenario("prossimi_step", payload)
+            st.success("Scenario t0 pubblicato ✅")
+
+    if not st.session_state.scenarios_ns:
+        st.info("Aggiungi almeno uno scenario base t0 per definire i *Prossimi Step* qui sotto.")
+    else:
+        st.subheader("3) Future Steps (applicati da t+N)")
+        st.caption("Gli step **aggiungono** fleet e CAPEX nel mese di applicazione; eventuali override si applicano da quel mese in poi.")
+
+        # --- Fleet grid OUTSIDE the form for real-time budget calc (step) ---
+        st.markdown("**Fleet da aggiungere nello Step**")
+        fleet_counts_step_live: Dict[str, int] = {}
+        fcols_step = st.columns(3)
+        for i, model_name in enumerate(catalog.keys()):
+            key = f"step_{model_name}"
+            val = fcols_step[i % 3].number_input(
+                model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
             )
+            fleet_counts_step_live[model_name] = int(val)
 
-            c9, c10, c11 = st.columns(3)
-            monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_ns")
-            btc_price_mom = c10.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1, key="prg_ns")
-            months_horizon = int(c11.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6, key="hor_ns"))
-            public_box_ns = st.checkbox("Salva base scenario t0 come pubblico", value=False, key="save_public_ns")
-            author_name_ns = st.text_input("Autore (facoltativo)", value="", key="author_ns")
+        live_ths_step, live_kw_step, live_asic_capex_step = (
+            sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_step_live.items() if m in catalog),
+            sum(catalog[m].power_kw * n for m, n in fleet_counts_step_live.items() if m in catalog),
+            sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_step_live.items() if m in catalog),
+        )
+        calc_step = st.columns(4)
+        calc_step[0].metric("ASIC CAPEX stimato (step)", f"${live_asic_capex_step:,.0f}")
+        calc_step[1].metric("TH/s aggiunti (step)", f"{live_ths_step:,.0f}")
+        calc_step[2].metric("IT kW aggiunti (step)", f"{live_kw_step:,.0f}")
+        calc_step[3].metric("$ per TH (step)", f"${(live_asic_capex_step/live_ths_step):,.2f}" if live_ths_step>0 else "—")
 
-            submitted = st.form_submit_button("➕ Add base scenario (t0)")
-
-        if submitted:
-            scn = Scenario(
-                name=name,
-                fleet={k:int(v) for k,v in fleet_counts_ns.items() if int(v)>0},
-                pue=float(pue),
-                uptime_pct=float(uptime_pct),
-                fixed_opex_month_usd=float(fixed_opex),
-                variable_energy_usd_per_kwh=float(var_price),
-                capex_asics_usd=float(capex_asics),
-                capex_container_usd=float(capex_container),
-                capex_transformer_usd=float(capex_transformer),
-                other_capex_usd=float(other_capex),
-                btc_price_override=float(btc_price_override) if btc_price_override>0 else None,
-                avg_fees_per_block_btc_override=float(avg_fees_override) if avg_fees_override>0 else None,
-                monthly_network_growth_pct=float(monthly_net_growth),
-                btc_price_monthly_growth_pct=float(btc_price_mom),
-                months_horizon=int(months_horizon),
-            )
-            st.session_state.scenarios_ns.append(scn)
-            st.success(f"Added {scn.name} ✅")
-
-            if public_box_ns:
-                author = author_name_ns.strip() or "anonymous"
-                payload = scenario_to_public_dict(scn, catalog, author=author)
-                save_public_scenario("prossimi_step", payload)
-                st.success("Scenario t0 pubblicato ✅")
-
-        if not st.session_state.scenarios_ns:
-            st.info("Aggiungi almeno uno scenario base t0 per definire i *Prossimi Step* qui sotto.")
-        else:
-            st.subheader("3) Future Steps (applicati da t+N)")
-            st.caption("Gli step **aggiungono** fleet e CAPEX nel mese di applicazione; eventuali override si applicano da quel mese in poi.")
-
-            # --- Fleet grid OUTSIDE the form for real-time budget calc (step) ---
-            st.markdown("**Fleet da aggiungere nello Step**")
-            fleet_counts_step_live: Dict[str, int] = {}
-            fcols_step = st.columns(3)
-            for i, model_name in enumerate(catalog.keys()):
-                key = f"step_{model_name}"
-                val = fcols_step[i % 3].number_input(
-                    model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
-                )
-                fleet_counts_step_live[model_name] = int(val)
-
-            live_ths_step, live_kw_step, live_asic_capex_step = (
-                sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_step_live.items() if m in catalog),
-                sum(catalog[m].power_kw * n for m, n in fleet_counts_step_live.items() if m in catalog),
-                sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_step_live.items() if m in catalog),
-            )
-            calc_step = st.columns(4)
-            calc_step[0].metric("ASIC CAPEX stimato (step)", f"${live_asic_capex_step:,.0f}")
-            calc_step[1].metric("TH/s aggiunti (step)", f"{live_ths_step:,.0f}")
-            calc_step[2].metric("IT kW aggiunti (step)", f"{live_kw_step:,.0f}")
-            calc_step[3].metric("$ per TH (step)", f"${(live_asic_capex_step/live_ths_step):,.2f}" if live_ths_step>0 else "—")
-
-            budget_step = st.number_input("Budget ASICs per step (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_step", 0.0), key="budget_step")
-            if budget_step and budget_step > 0:
-                delta = budget_step - live_asic_capex_step
-                if delta >= 0:
-                    st.success(f"✅ Entro budget step: residuo ${delta:,.0f}")
-                else:
-                    st.error(f"⚠️ Fuori budget step: mancano ${-delta:,.0f}")
+        budget_step = st.number_input("Budget ASICs per step (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_step", 0.0), key="budget_step")
+        if budget_step and budget_step > 0:
+            delta = budget_step - live_asic_capex_step
+            if delta >= 0:
+                st.success(f"✅ Entro budget step: residuo ${delta:,.0f}")
+            else:
+                st.error(f"⚠️ Fuori budget step: mancano ${-delta:,.0f}")
 
         # --- Step form ---
-        with st.expander("4) Future Steps (aggiunte + override)", expanded=True):
-            with st.form("new_future_step"):
-                scn_names = [s.name for s in st.session_state.scenarios_ns]
-                target_scn = st.selectbox("Scenario target", scn_names)
-                month_offset = st.number_input("Applica da mese (t+N)", min_value=1, max_value=240, value=4, step=1)
+        with st.form("new_future_step"):
+            scn_names = [s.name for s in st.session_state.scenarios_ns]
+            target_scn = st.selectbox("Scenario target", scn_names)
+            month_offset = st.number_input("Applica da mese (t+N)", min_value=1, max_value=240, value=4, step=1)
 
-                st.markdown("**CAPEX dello step (USD)**")
-                cc1, cc2, cc3, cc4 = st.columns(4)
-                s_capex_asics = cc1.number_input("CAPEX ASICs (0 = compute da catalogo)", min_value=0.0, step=1000.0, value=0.0, key="sc_asics")
-                s_capex_container = cc2.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=0.0, key="sc_cont")
-                s_capex_transformer = cc3.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=0.0, key="sc_trf")
-                s_other_capex = cc4.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=0.0, key="sc_other")
+            st.markdown("**CAPEX dello step (USD)**")
+            cc1, cc2, cc3, cc4 = st.columns(4)
+            s_capex_asics = cc1.number_input("CAPEX ASICs (0 = compute da catalogo)", min_value=0.0, step=1000.0, value=0.0, key="sc_asics")
+            s_capex_container = cc2.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=0.0, key="sc_cont")
+            s_capex_transformer = cc3.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=0.0, key="sc_trf")
+            s_other_capex = cc4.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=0.0, key="sc_other")
 
-                st.markdown("**Override opzionali (lascia vuoto = eredita)**")
-                oo1, oo2, oo3 = st.columns(3)
-                s_pue = oo1.text_input("PUE (es. 1.08)", value="")
-                s_uptime = oo2.text_input("Uptime % (es. 97)", value="")
-                s_var_price = oo3.text_input("Variable $/kWh (es. 0.05)", value="")
-                oo4, oo5, oo6 = st.columns(3)
-                s_fixed_opex = oo4.text_input("Fixed OPEX / month", value="")
-                s_btc_override = oo5.text_input("BTC price override", value="")
-                s_fees_override = oo6.text_input("Avg fees / block BTC", value="")
-                oo7, oo8 = st.columns(2)
-                s_nh_growth = oo7.text_input("Network growth %/m", value="")
-                s_price_growth = oo8.text_input("BTC price growth %/m", value="")
+            st.markdown("**Override opzionali (lascia vuoto = eredita)**")
+            oo1, oo2, oo3 = st.columns(3)
+            s_pue = oo1.text_input("PUE (es. 1.08)", value="")
+            s_uptime = oo2.text_input("Uptime % (es. 97)", value="")
+            s_var_price = oo3.text_input("Variable $/kWh (es. 0.05)", value="")
+            oo4, oo5, oo6 = st.columns(3)
+            s_fixed_opex = oo4.text_input("Fixed OPEX / month", value="")
+            s_btc_override = oo5.text_input("BTC price override", value="")
+            s_fees_override = oo6.text_input("Avg fees / block BTC", value="")
+            oo7, oo8 = st.columns(2)
+            s_nh_growth = oo7.text_input("Network growth %/m", value="")
+            s_price_growth = oo8.text_input("BTC price growth %/m", value="")
 
-                submitted_step = st.form_submit_button("➕ Add future step")
+            submitted_step = st.form_submit_button("➕ Add future step")
 
-            if submitted_step:
-                def opt_float(x: str) -> Optional[float]:
-                    x = x.strip()
-                    return float(x) if x not in ("", None) else None
-                fleet_counts_step = {k:int(v) for k,v in fleet_counts_step_live.items() if int(v)>0}
-                step = FutureStep(
-                    name=f"{target_scn} @ t+{int(month_offset)}",
-                    scenario_name=target_scn,
-                    month_offset=int(month_offset),
-                    fleet=fleet_counts_step,
-                    pue=opt_float(s_pue),
-                    uptime_pct=opt_float(s_uptime),
-                    fixed_opex_month_usd=opt_float(s_fixed_opex),
-                    variable_energy_usd_per_kwh=opt_float(s_var_price),
-                    capex_asics_usd=float(s_capex_asics),
-                    capex_container_usd=float(s_capex_container),
-                    capex_transformer_usd=float(s_capex_transformer),
-                    other_capex_usd=float(s_other_capex),
-                    btc_price_override=opt_float(s_btc_override),
-                    avg_fees_per_block_btc_override=opt_float(s_fees_override),
-                    monthly_network_growth_pct=opt_float(s_nh_growth),
-                    btc_price_monthly_growth_pct=opt_float(s_price_growth),
+        if submitted_step:
+            def opt_float(x: str) -> Optional[float]:
+                x = x.strip()
+                return float(x) if x not in ("", None) else None
+            fleet_counts_step = {k:int(v) for k,v in fleet_counts_step_live.items() if int(v)>0}
+            step = FutureStep(
+                name=f"{target_scn} @ t+{int(month_offset)}",
+                scenario_name=target_scn,
+                month_offset=int(month_offset),
+                fleet=fleet_counts_step,
+                pue=opt_float(s_pue),
+                uptime_pct=opt_float(s_uptime),
+                fixed_opex_month_usd=opt_float(s_fixed_opex),
+                variable_energy_usd_per_kwh=opt_float(s_var_price),
+                capex_asics_usd=float(s_capex_asics),
+                capex_container_usd=float(s_capex_container),
+                capex_transformer_usd=float(s_capex_transformer),
+                other_capex_usd=float(s_other_capex),
+                btc_price_override=opt_float(s_btc_override),
+                avg_fees_per_block_btc_override=opt_float(s_fees_override),
+                monthly_network_growth_pct=opt_float(s_nh_growth),
+                btc_price_monthly_growth_pct=opt_float(s_price_growth),
+            )
+            st.session_state.future_steps.append(step)
+            st.success(f"Added step: {step.name} ✅")
+
+            if st.checkbox("Pubblica anche questo Step", value=False, key=f"pub_step_{target_scn}_{month_offset}"):
+                save_public_scenario("prossimi_step", step_to_public_dict(step))
+                st.success("Step pubblicato ✅")
+
+        # Show per-scenario tabs with steps
+        tabs = st.tabs([s.name for s in st.session_state.scenarios_ns] + ["📊 Compare"])
+        dfs = []
+        live_btc_price = price_usd
+        live_avg_fees = avg_fees if avg_fees is not None else 0.0
+        live_network_ths = net_ths
+
+        for idx, scn in enumerate(st.session_state.scenarios_ns):
+            with tabs[idx]:
+                fees_block = scn.avg_fees_per_block_btc_override if scn.avg_fees_per_block_btc_override is not None else live_avg_fees
+                btc_price0 = scn.btc_price_override or live_btc_price
+
+                df = simulate_scenario_with_steps(
+                    scn,
+                    steps=st.session_state.future_steps,
+                    catalog=catalog,
+                    network_ths_start=live_network_ths,
+                    avg_fees_btc=fees_block,
+                    btc_price_usd_start=btc_price0,
+                    flat_price_usd_per_kwh_global=flat_price,
+                    price_curve_usd_per_kwh=price_curve,
+                    halving_date=halving_date_input,
+                    subsidy_before=subsidy_before,
+                    subsidy_after=subsidy_after,
                 )
-                st.session_state.future_steps.append(step)
-                st.success(f"Added step: {step.name} ✅")
+                dfs.append((scn, df))
 
-                if st.checkbox("Pubblica anche questo Step", value=False, key=f"pub_step_{target_scn}_{month_offset}"):
-                    save_public_scenario("prossimi_step", step_to_public_dict(step))
-                    st.success("Step pubblicato ✅")
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("Fleet TH/s (final)", f"{df.attrs['fleet_ths']:,.0f}")
+                k2.metric("IT Power kW (final)", f"{df.attrs['it_power_kw']:,.0f}")
+                k3.metric("Total CAPEX (t0 + steps)", f"${df.attrs['total_capex_usd']:,.0f}")
+                k4.metric("Payback (months)", df.attrs["payback_months"] if df.attrs["payback_months"] else "—")
 
-            # Show per-scenario tabs with steps
-            tabs = st.tabs([s.name for s in st.session_state.scenarios_ns] + ["📊 Compare"])
-            dfs = []
-            live_btc_price = price_usd
-            live_avg_fees = avg_fees if avg_fees is not None else 0.0
-            live_network_ths = net_ths
+                st.dataframe(
+                    df[["month","btc_price_usd","subsidy_btc","btc_month","rev_usd","energy_cost_usd","fixed_opex_usd","ebitda_usd","cashflow_usd","cum_cashflow_usd"]],
+                    key=f"df_steps_{idx}"
+                )
+                
+                # Charts
+                fig = go.Figure()
+                fig.add_trace(go.Bar(x=df["month"], y=df["cashflow_usd"], name="Monthly Cashflow"))
+                fig.add_trace(go.Scatter(x=df["month"], y=df["cum_cashflow_usd"], name="Cumulative", mode="lines+markers"))
+                fig.update_layout(title=f"Cashflow — {scn.name} (with Steps)", xaxis_title="Month", yaxis_title="USD", barmode="group")
+                st.plotly_chart(fig, use_container_width=True, key=f"cf_steps_{idx}")
 
-            for idx, scn in enumerate(st.session_state.scenarios_ns):
-                with tabs[idx]:
-                    fees_block = scn.avg_fees_per_block_btc_override if scn.avg_fees_per_block_btc_override is not None else live_avg_fees
-                    btc_price0 = scn.btc_price_override or live_btc_price
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    f1 = go.Figure()
+                    f1.add_trace(go.Bar(x=df["month"], y=df["btc_month"], name="BTC / month"))
+                    f1.update_layout(title="BTC produced", xaxis_title="Month", yaxis_title="BTC")
+                    st.plotly_chart(f1, use_container_width=True, key=f"btc_steps_{idx}")
+                with c2:
+                    f2 = go.Figure()
+                    f2.add_trace(go.Scatter(x=df["month"], y=df["fleet_ths"], mode="lines+markers", name="Fleet TH/s"))
+                    f2.update_layout(title="Fleet TH/s over time", xaxis_title="Month", yaxis_title="TH/s")
+                    st.plotly_chart(f2, use_container_width=True, key=f"ths_steps_{idx}")
+                with c3:
+                    f3 = go.Figure()
+                    f3.add_trace(go.Scatter(x=df["month"], y=df["it_power_kw"], mode="lines+markers", name="IT kW"))
+                    f3.update_layout(title="IT Power (kW) over time", xaxis_title="Month", yaxis_title="kW")
+                    st.plotly_chart(f3, use_container_width=True, key=f"kw_steps_{idx}")
 
-                    df = simulate_scenario_with_steps(
-                        scn,
-                        steps=st.session_state.future_steps,
-                        catalog=catalog,
-                        network_ths_start=live_network_ths,
-                        avg_fees_btc=fees_block,
-                        btc_price_usd_start=btc_price0,
-                        flat_price_usd_per_kwh_global=flat_price,
-                        price_curve_usd_per_kwh=price_curve,
-                        halving_date=halving_date_input,
-                        subsidy_before=subsidy_before,
-                        subsidy_after=subsidy_after,
-                    )
-                    dfs.append((scn, df))
+        with tabs[-1]:
+            comp_rows = []
+            for scn, df in dfs:
+                comp_rows.append({
+                    "Scenario": scn.name,
+                    "Total CAPEX $ (t0+steps)": df.attrs['total_capex_usd'],
+                    "Payback months": df.attrs['payback_months'] or np.nan,
+                    "Year-1 EBITDA $": float(df.loc[:11, "ebitda_usd"].sum()),
+                    "Year-2 EBITDA $": float(df.loc[12:23, "ebitda_usd"].sum()) if len(df) >= 24 else np.nan,
+                    "Year-3 EBITDA $": float(df.loc[24:35, "ebitda_usd"].sum()) if len(df) >= 36 else np.nan,
+                    "Cum CF @ 36m $": float(df.loc[min(len(df)-1,35), "cum_cashflow_usd"]) if len(df) >= 12 else float(df.iloc[-1]["cum_cashflow_usd"]),
+                    "Fleet TH/s (final)": float(df.iloc[-1]["fleet_ths"]) if len(df) else 0.0,
+                    "IT kW (final)": float(df.iloc[-1]["it_power_kw"]) if len(df) else 0.0,
+                })
+            comp_df = pd.DataFrame(comp_rows)
+            st.dataframe(comp_df, key="df_compare_classic")
 
-                    k1, k2, k3, k4 = st.columns(4)
-                    k1.metric("Fleet TH/s (final)", f"{df.attrs['fleet_ths']:,.0f}")
-                    k2.metric("IT Power kW (final)", f"{df.attrs['it_power_kw']:,.0f}")
-                    k3.metric("Total CAPEX (t0 + steps)", f"${df.attrs['total_capex_usd']:,.0f}")
-                    k4.metric("Payback (months)", df.attrs["payback_months"] if df.attrs["payback_months"] else "—")
+            best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
+            if not best.empty:
+                nameb = best.iloc[0]["Scenario"]
+                st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
 
-                    st.dataframe(
-                        df[["month","btc_price_usd","subsidy_btc","btc_month","rev_usd","energy_cost_usd","fixed_opex_usd","ebitda_usd","cashflow_usd","cum_cashflow_usd"]],
-                        key=f"df_steps_{idx}"
-                    )
-                    
-                    # Charts
-                    fig = go.Figure()
-                    fig.add_trace(go.Bar(x=df["month"], y=df["cashflow_usd"], name="Monthly Cashflow"))
-                    fig.add_trace(go.Scatter(x=df["month"], y=df["cum_cashflow_usd"], name="Cumulative", mode="lines+markers"))
-                    fig.update_layout(title=f"Cashflow — {scn.name} (with Steps)", xaxis_title="Month", yaxis_title="USD", barmode="group")
-                    st.plotly_chart(fig, use_container_width=True, key=f"cf_steps_{idx}")
+        with st.expander("📚 Scenari pubblici (Prossimi Step)"):
+            pub = list_public_scenarios("prossimi_step")  # <-- minuscolo + underscore
+            if not pub:
+                st.caption("Nessuno scenario pubblico salvato.")
+            else:
+                df_pub = pd.DataFrame(pub)
+                st.dataframe(df_pub)
 
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        f1 = go.Figure()
-                        f1.add_trace(go.Bar(x=df["month"], y=df["btc_month"], name="BTC / month"))
-                        f1.update_layout(title="BTC produced", xaxis_title="Month", yaxis_title="BTC")
-                        st.plotly_chart(f1, use_container_width=True, key=f"btc_steps_{idx}")
-                    with c2:
-                        f2 = go.Figure()
-                        f2.add_trace(go.Scatter(x=df["month"], y=df["fleet_ths"], mode="lines+markers", name="Fleet TH/s"))
-                        f2.update_layout(title="Fleet TH/s over time", xaxis_title="Month", yaxis_title="TH/s")
-                        st.plotly_chart(f2, use_container_width=True, key=f"ths_steps_{idx}")
-                    with c3:
-                        f3 = go.Figure()
-                        f3.add_trace(go.Scatter(x=df["month"], y=df["it_power_kw"], mode="lines+markers", name="IT kW"))
-                        f3.update_layout(title="IT Power (kW) over time", xaxis_title="Month", yaxis_title="kW")
-                        st.plotly_chart(f3, use_container_width=True, key=f"kw_steps_{idx}")
+                # bottone per cancellare tutto
+                if st.button("❌ Elimina tutti gli scenari pubblici (Prossimi Step)"):
+                    clear_public_scenarios("prossimi_step")  # <-- qui
+                    st.success("Scenari pubblici (Prossimi Step) eliminati.")
+                    st.rerun()
 
-            with tabs[-1]:
-                comp_rows = []
-                for scn, df in dfs:
-                    comp_rows.append({
-                        "Scenario": scn.name,
-                        "Total CAPEX $ (t0+steps)": df.attrs['total_capex_usd'],
-                        "Payback months": df.attrs['payback_months'] or np.nan,
-                        "Year-1 EBITDA $": float(df.loc[:11, "ebitda_usd"].sum()),
-                        "Year-2 EBITDA $": float(df.loc[12:23, "ebitda_usd"].sum()) if len(df) >= 24 else np.nan,
-                        "Year-3 EBITDA $": float(df.loc[24:35, "ebitda_usd"].sum()) if len(df) >= 36 else np.nan,
-                        "Cum CF @ 36m $": float(df.loc[min(len(df)-1,35), "cum_cashflow_usd"]) if len(df) >= 12 else float(df.iloc[-1]["cum_cashflow_usd"]),
-                        "Fleet TH/s (final)": float(df.iloc[-1]["fleet_ths"]) if len(df) else 0.0,
-                        "IT kW (final)": float(df.iloc[-1]["it_power_kw"]) if len(df) else 0.0,
-                    })
-                comp_df = pd.DataFrame(comp_rows)
-                st.dataframe(comp_df, key="df_compare_classic")
-
-                best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
-                if not best.empty:
-                    nameb = best.iloc[0]["Scenario"]
-                    st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
-
-            with st.expander("📚 Scenari pubblici (Prossimi Step)"):
-                pub = list_public_scenarios("prossimi_step")  # <-- minuscolo + underscore
-                if not pub:
-                    st.caption("Nessuno scenario pubblico salvato.")
-                else:
-                    df_pub = pd.DataFrame(pub)
-                    st.dataframe(df_pub)
-
-                    # bottone per cancellare tutto
-                    if st.button("❌ Elimina tutti gli scenari pubblici (Prossimi Step)"):
-                        clear_public_scenarios("prossimi_step")  # <-- qui
-                        st.success("Scenari pubblici (Prossimi Step) eliminati.")
+                # dropdown per cancellare singolo scenario
+                idx_to_delete = st.selectbox(
+                    "Seleziona scenario da eliminare",
+                    options=list(range(len(pub))),
+                    format_func=lambda i: f"{i} — {pub[i].get('name','?')}",
+                    key="del_prossimi_step"  # (consiglio: niente spazi nei key)
+                )
+                if st.button("Elimina scenario selezionato (Prossimi Step)"):
+                    if delete_public_scenario("prossimi_step", idx_to_delete):  # <-- qui
+                        st.success("Scenario eliminato.")
                         st.rerun()
-
-                    # dropdown per cancellare singolo scenario
-                    idx_to_delete = st.selectbox(
-                        "Seleziona scenario da eliminare",
-                        options=list(range(len(pub))),
-                        format_func=lambda i: f"{i} — {pub[i].get('name','?')}",
-                        key="del_prossimi_step"  # (consiglio: niente spazi nei key)
-                    )
-                    if st.button("Elimina scenario selezionato (Prossimi Step)"):
-                        if delete_public_scenario("prossimi_step", idx_to_delete):  # <-- qui
-                            st.success("Scenario eliminato.")
-                            st.rerun()
 
 
 # -----------------------------
