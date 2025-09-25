@@ -1780,7 +1780,6 @@ elif mode == "Hosting":
         mcols[2].metric("IT kW (ospitata)", f"{live_kw_h:,.0f}")
         mcols[3].metric("$ per TH (acquisto)", f"${(live_asic_cost_h/live_ths_h):,.2f}" if live_ths_h>0 else "—")
 
-    st.divider()
     st.subheader("3) Set vendita")
     with st.expander("**Prezzi di vendita ASIC (per modello)** — opzionale (default = costo acquisto)", expanded=False):
         st.caption("Compila uno dei due campi qui sotto per impostare TUTTI i prezzi di vendita...")
