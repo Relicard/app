@@ -1312,52 +1312,6 @@ with st.sidebar:
             else:
                 st.caption("Nessun dato disponibile dalle API per le ultime 24h.")
 
-    if st.checkbox("📈 Mostra storico ERCOT"):
-        df_hist = list_ercot_prices()
-        if not df_hist.empty:
-            st.dataframe(df_hist.tail(24))
-
-            fig_hist = go.Figure()
-            fig_hist.add_trace(go.Scatter(
-                x=pd.to_datetime(df_hist["timestamp"]),
-                y=df_hist["price_usd_per_kwh"],
-                mode="lines+markers"
-            ))
-            fig_hist.update_layout(title=f"Storico prezzi ERCOT ({location})", xaxis_title="Ora", yaxis_title="$/kWh")
-            st.plotly_chart(fig_hist, use_container_width=True)
-
-            # --- Media prezzi salvati ---
-            avg_local = df_hist["price_usd_per_kwh"].mean()
-            st.metric("Media prezzi salvati", f"{avg_local:.5f} $/kWh")
-        else:
-            st.caption("Nessun dato salvato nello storico ancora.")
- 
-    if st.checkbox("📊 Mostra ultime 24h (API live)"):
-        df_24h = fetch_ercot_last_24h(GRIDSTATUS_API_KEY, location)
-        if not df_24h.empty:
-            st.dataframe(df_24h)  # o tail(righe_24h) se vuoi limitare
-
-            fig24 = go.Figure()
-            fig24.add_trace(go.Scatter(
-                x=df_24h["timestamp"],
-                y=df_24h["price_usd_per_kwh"],
-                mode="lines+markers"
-            ))
-            fig24.update_layout(
-                title=f"Prezzi ERCOT ultime 24h ({location})",
-                xaxis_title="Ora",
-                yaxis_title="$/kWh"
-            )
-            st.plotly_chart(fig24, use_container_width=True)
-
-            # --- Media ultime 24h ---
-            avg_24h = df_24h["price_usd_per_kwh"].mean()
-            st.metric("Media ultime 24h (API)", f"{avg_24h:.5f} $/kWh")
-        else:
-            st.caption("Nessun dato disponibile dalle API.")
-
-
-
 
 # -----------------------------
 # Catalog editor
