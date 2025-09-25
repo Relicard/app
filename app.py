@@ -1454,27 +1454,28 @@ elif mode == "Prossimi Step":
             )
             fleet_counts_ns[model_name] = int(val)
 
-    live_ths_ns, live_kw_ns, live_asic_capex_ns = ( 
-        sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_ns.items() if m in catalog),
-        sum(catalog[m].power_kw * n for m, n in fleet_counts_ns.items() if m in catalog),
-        sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_ns.items() if m in catalog),
-    )
+        live_ths_ns, live_kw_ns, live_asic_capex_ns = ( 
+            sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_ns.items() if m in catalog),
+            sum(catalog[m].power_kw * n for m, n in fleet_counts_ns.items() if m in catalog),
+            sum(catalog[m].unit_price_usd * n for m, n in fleet_counts_ns.items() if m in catalog),
+        )
 
-    calc_ns = st.columns(4)
-    calc_ns[0].metric("ASIC CAPEX stimato (t0)", f"${live_asic_capex_ns:,.0f}")
-    calc_ns[1].metric("Fleet TH/s (t0)", f"{live_ths_ns:,.0f}")
-    calc_ns[2].metric("IT kW (t0)", f"{live_kw_ns:,.0f}")
-    calc_ns[3].metric("$ per TH (t0)", f"${(live_asic_capex_ns/live_ths_ns):,.2f}" if live_ths_ns>0 else "—")
+        calc_ns = st.columns(4)
+        calc_ns[0].metric("ASIC CAPEX stimato (t0)", f"${live_asic_capex_ns:,.0f}")
+        calc_ns[1].metric("Fleet TH/s (t0)", f"{live_ths_ns:,.0f}")
+        calc_ns[2].metric("IT kW (t0)", f"{live_kw_ns:,.0f}")
+        calc_ns[3].metric("$ per TH (t0)", f"${(live_asic_capex_ns/live_ths_ns):,.2f}" if live_ths_ns>0 else "—")
 
-    budget_ns = st.number_input("Budget ASICs t0 (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_ns", 0.0), key="budget_ns")
-    if budget_ns and budget_ns > 0:
-        delta = budget_ns - live_asic_capex_ns
-        if delta >= 0:
-            st.success(f"✅ Entro budget t0: residuo ${delta:,.0f}")
-        else:
-            st.error(f"⚠️ Fuori budget t0: mancano ${-delta:,.0f}")
+        budget_ns = st.number_input("Budget ASICs t0 (opzionale)", min_value=0.0, step=1000.0, value=st.session_state.get("budget_ns", 0.0), key="budget_ns")
+        if budget_ns and budget_ns > 0:
+            delta = budget_ns - live_asic_capex_ns
+            if delta >= 0:
+                st.success(f"✅ Entro budget t0: residuo ${delta:,.0f}")
+            else:
+                st.error(f"⚠️ Fuori budget t0: mancano ${-delta:,.0f}")
 
     # --- Base scenario form ---
+    st.subheader("3) Parametri")
     with st.expander("3) Parametri scenario base (t0)", expanded=False):
         with st.form("new_scenario_ns"):
             st.markdown("**Add base scenario (t0)**")
