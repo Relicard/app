@@ -113,15 +113,9 @@ def list_ercot_prices() -> pd.DataFrame:
     return pd.DataFrame(data)
 
 def fetch_ercot_last_24h(api_key: str, location: str) -> pd.DataFrame:
-    """
-    Scarica i prezzi ERCOT RTM ($/kWh) per le ultime 24h dal dataset GridStatus.
-    """
     url = "https://api.gridstatus.io/v1/datasets/ercot_lmp_by_settlement_point/query"
-
-    # Calcolo finestra temporale ISO (UTC)
     end = datetime.utcnow()
     start = end - timedelta(hours=24)
-
     params = {
         "api_key": api_key,
         "filter_column": "location",
@@ -130,22 +124,20 @@ def fetch_ercot_last_24h(api_key: str, location: str) -> pd.DataFrame:
         "end": end.isoformat(timespec="seconds") + "Z",
         "limit": 5000
     }
-
     try:
         r = requests.get(url, params=params, timeout=15)
         r.raise_for_status()
         rows = r.json().get("data", [])
         df = pd.DataFrame(rows)
         if df.empty:
-            return pd.DataFrame()
-
-        # Conversione campi
+            return df
         df["timestamp"] = pd.to_datetime(df["interval_start_utc"])
         df["price_usd_per_kwh"] = df["lmp"].astype(float) / 1000.0
         return df[["timestamp", "price_usd_per_kwh", "location"]].sort_values("timestamp")
     except Exception as e:
         st.error(f"Errore fetch_ercot_last_24h: {e}")
         return pd.DataFrame()
+
 
 
 
