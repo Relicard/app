@@ -1781,6 +1781,7 @@ elif mode == "Hosting":
         mcols[3].metric("$ per TH (acquisto)", f"${(live_asic_cost_h/live_ths_h):,.2f}" if live_ths_h>0 else "—")
 
     st.divider()
+    st.subheader("3) Set vendita")
     with st.expander("**Prezzi di vendita ASIC (per modello)** — opzionale (default = costo acquisto)", expanded=False):
         st.caption("Compila uno dei due campi qui sotto per impostare TUTTI i prezzi di vendita...")
 
@@ -1819,6 +1820,7 @@ elif mode == "Hosting":
 
 
     # --- Form scenario hosting ---
+    st.subheader("4) Parametri")
     with st.expander("4) Parametri scenario Hosting", expanded=False):
         with st.form("new_hosting_scenario"):
             cols = st.columns(3)
