@@ -113,22 +113,34 @@ def list_ercot_prices() -> pd.DataFrame:
     return pd.DataFrame(data)
 
 def fetch_ercot_last_24h(api_key: str, location: str) -> pd.DataFrame:
+    """
+    Scarica i prezzi ERCOT RTM ($/kWh) per le ultime 24h dal dataset GridStatus.
+    """
     url = "https://api.gridstatus.io/v1/datasets/ercot_lmp_by_settlement_point/query"
     params = {
-        "api_key": api_key,
         "filter_column": "location",
         "filter_value": location,
         "time": "last_24h",
         "limit": 5000
     }
-    r = requests.get(url, params=params, timeout=15)
-    r.raise_for_status()
-    rows = r.json().get("data", [])
-    df = pd.DataFrame(rows)
-    if not df.empty:
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=15)
+        r.raise_for_status()
+        rows = r.json().get("data", [])
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return pd.DataFrame()
+
+        # Conversione campi
         df["timestamp"] = pd.to_datetime(df["interval_start_utc"])
         df["price_usd_per_kwh"] = df["lmp"].astype(float) / 1000.0
-    return df
+        return df[["timestamp", "price_usd_per_kwh", "location"]].sort_values("timestamp")
+    except Exception as e:
+        st.error(f"Errore fetch_ercot_last_24h: {e}")
+        return pd.DataFrame()
+
 
 
 # -----------------------------
