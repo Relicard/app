@@ -1605,145 +1605,145 @@ elif mode == "Prossimi Step":
 
                 submitted_step = st.form_submit_button("➕ Add future step")
 
-        if submitted_step:
-            def opt_float(x: str) -> Optional[float]:
-                x = x.strip()
-                return float(x) if x not in ("", None) else None
-            fleet_counts_step = {k:int(v) for k,v in fleet_counts_step_live.items() if int(v)>0}
-            step = FutureStep(
-                name=f"{target_scn} @ t+{int(month_offset)}",
-                scenario_name=target_scn,
-                month_offset=int(month_offset),
-                fleet=fleet_counts_step,
-                pue=opt_float(s_pue),
-                uptime_pct=opt_float(s_uptime),
-                fixed_opex_month_usd=opt_float(s_fixed_opex),
-                variable_energy_usd_per_kwh=opt_float(s_var_price),
-                capex_asics_usd=float(s_capex_asics),
-                capex_container_usd=float(s_capex_container),
-                capex_transformer_usd=float(s_capex_transformer),
-                other_capex_usd=float(s_other_capex),
-                btc_price_override=opt_float(s_btc_override),
-                avg_fees_per_block_btc_override=opt_float(s_fees_override),
-                monthly_network_growth_pct=opt_float(s_nh_growth),
-                btc_price_monthly_growth_pct=opt_float(s_price_growth),
-            )
-            st.session_state.future_steps.append(step)
-            st.success(f"Added step: {step.name} ✅")
-
-            if st.checkbox("Pubblica anche questo Step", value=False, key=f"pub_step_{target_scn}_{month_offset}"):
-                save_public_scenario("prossimi_step", step_to_public_dict(step))
-                st.success("Step pubblicato ✅")
-
-        # Show per-scenario tabs with steps
-        tabs = st.tabs([s.name for s in st.session_state.scenarios_ns] + ["📊 Compare"])
-        dfs = []
-        live_btc_price = price_usd
-        live_avg_fees = avg_fees if avg_fees is not None else 0.0
-        live_network_ths = net_ths
-
-        for idx, scn in enumerate(st.session_state.scenarios_ns):
-            with tabs[idx]:
-                fees_block = scn.avg_fees_per_block_btc_override if scn.avg_fees_per_block_btc_override is not None else live_avg_fees
-                btc_price0 = scn.btc_price_override or live_btc_price
-
-                df = simulate_scenario_with_steps(
-                    scn,
-                    steps=st.session_state.future_steps,
-                    catalog=catalog,
-                    network_ths_start=live_network_ths,
-                    avg_fees_btc=fees_block,
-                    btc_price_usd_start=btc_price0,
-                    flat_price_usd_per_kwh_global=flat_price,
-                    price_curve_usd_per_kwh=price_curve,
-                    halving_date=halving_date_input,
-                    subsidy_before=subsidy_before,
-                    subsidy_after=subsidy_after,
+            if submitted_step:
+                def opt_float(x: str) -> Optional[float]:
+                    x = x.strip()
+                    return float(x) if x not in ("", None) else None
+                fleet_counts_step = {k:int(v) for k,v in fleet_counts_step_live.items() if int(v)>0}
+                step = FutureStep(
+                    name=f"{target_scn} @ t+{int(month_offset)}",
+                    scenario_name=target_scn,
+                    month_offset=int(month_offset),
+                    fleet=fleet_counts_step,
+                    pue=opt_float(s_pue),
+                    uptime_pct=opt_float(s_uptime),
+                    fixed_opex_month_usd=opt_float(s_fixed_opex),
+                    variable_energy_usd_per_kwh=opt_float(s_var_price),
+                    capex_asics_usd=float(s_capex_asics),
+                    capex_container_usd=float(s_capex_container),
+                    capex_transformer_usd=float(s_capex_transformer),
+                    other_capex_usd=float(s_other_capex),
+                    btc_price_override=opt_float(s_btc_override),
+                    avg_fees_per_block_btc_override=opt_float(s_fees_override),
+                    monthly_network_growth_pct=opt_float(s_nh_growth),
+                    btc_price_monthly_growth_pct=opt_float(s_price_growth),
                 )
-                dfs.append((scn, df))
+                st.session_state.future_steps.append(step)
+                st.success(f"Added step: {step.name} ✅")
 
-                k1, k2, k3, k4 = st.columns(4)
-                k1.metric("Fleet TH/s (final)", f"{df.attrs['fleet_ths']:,.0f}")
-                k2.metric("IT Power kW (final)", f"{df.attrs['it_power_kw']:,.0f}")
-                k3.metric("Total CAPEX (t0 + steps)", f"${df.attrs['total_capex_usd']:,.0f}")
-                k4.metric("Payback (months)", df.attrs["payback_months"] if df.attrs["payback_months"] else "—")
+                if st.checkbox("Pubblica anche questo Step", value=False, key=f"pub_step_{target_scn}_{month_offset}"):
+                    save_public_scenario("prossimi_step", step_to_public_dict(step))
+                    st.success("Step pubblicato ✅")
 
-                st.dataframe(
-                    df[["month","btc_price_usd","subsidy_btc","btc_month","rev_usd","energy_cost_usd","fixed_opex_usd","ebitda_usd","cashflow_usd","cum_cashflow_usd"]],
-                    key=f"df_steps_{idx}"
-                )
-                
-                # Charts
-                fig = go.Figure()
-                fig.add_trace(go.Bar(x=df["month"], y=df["cashflow_usd"], name="Monthly Cashflow"))
-                fig.add_trace(go.Scatter(x=df["month"], y=df["cum_cashflow_usd"], name="Cumulative", mode="lines+markers"))
-                fig.update_layout(title=f"Cashflow — {scn.name} (with Steps)", xaxis_title="Month", yaxis_title="USD", barmode="group")
-                st.plotly_chart(fig, use_container_width=True, key=f"cf_steps_{idx}")
+            # Show per-scenario tabs with steps
+            tabs = st.tabs([s.name for s in st.session_state.scenarios_ns] + ["📊 Compare"])
+            dfs = []
+            live_btc_price = price_usd
+            live_avg_fees = avg_fees if avg_fees is not None else 0.0
+            live_network_ths = net_ths
 
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    f1 = go.Figure()
-                    f1.add_trace(go.Bar(x=df["month"], y=df["btc_month"], name="BTC / month"))
-                    f1.update_layout(title="BTC produced", xaxis_title="Month", yaxis_title="BTC")
-                    st.plotly_chart(f1, use_container_width=True, key=f"btc_steps_{idx}")
-                with c2:
-                    f2 = go.Figure()
-                    f2.add_trace(go.Scatter(x=df["month"], y=df["fleet_ths"], mode="lines+markers", name="Fleet TH/s"))
-                    f2.update_layout(title="Fleet TH/s over time", xaxis_title="Month", yaxis_title="TH/s")
-                    st.plotly_chart(f2, use_container_width=True, key=f"ths_steps_{idx}")
-                with c3:
-                    f3 = go.Figure()
-                    f3.add_trace(go.Scatter(x=df["month"], y=df["it_power_kw"], mode="lines+markers", name="IT kW"))
-                    f3.update_layout(title="IT Power (kW) over time", xaxis_title="Month", yaxis_title="kW")
-                    st.plotly_chart(f3, use_container_width=True, key=f"kw_steps_{idx}")
+            for idx, scn in enumerate(st.session_state.scenarios_ns):
+                with tabs[idx]:
+                    fees_block = scn.avg_fees_per_block_btc_override if scn.avg_fees_per_block_btc_override is not None else live_avg_fees
+                    btc_price0 = scn.btc_price_override or live_btc_price
 
-        with tabs[-1]:
-            comp_rows = []
-            for scn, df in dfs:
-                comp_rows.append({
-                    "Scenario": scn.name,
-                    "Total CAPEX $ (t0+steps)": df.attrs['total_capex_usd'],
-                    "Payback months": df.attrs['payback_months'] or np.nan,
-                    "Year-1 EBITDA $": float(df.loc[:11, "ebitda_usd"].sum()),
-                    "Year-2 EBITDA $": float(df.loc[12:23, "ebitda_usd"].sum()) if len(df) >= 24 else np.nan,
-                    "Year-3 EBITDA $": float(df.loc[24:35, "ebitda_usd"].sum()) if len(df) >= 36 else np.nan,
-                    "Cum CF @ 36m $": float(df.loc[min(len(df)-1,35), "cum_cashflow_usd"]) if len(df) >= 12 else float(df.iloc[-1]["cum_cashflow_usd"]),
-                    "Fleet TH/s (final)": float(df.iloc[-1]["fleet_ths"]) if len(df) else 0.0,
-                    "IT kW (final)": float(df.iloc[-1]["it_power_kw"]) if len(df) else 0.0,
-                })
-            comp_df = pd.DataFrame(comp_rows)
-            st.dataframe(comp_df, key="df_compare_classic")
+                    df = simulate_scenario_with_steps(
+                        scn,
+                        steps=st.session_state.future_steps,
+                        catalog=catalog,
+                        network_ths_start=live_network_ths,
+                        avg_fees_btc=fees_block,
+                        btc_price_usd_start=btc_price0,
+                        flat_price_usd_per_kwh_global=flat_price,
+                        price_curve_usd_per_kwh=price_curve,
+                        halving_date=halving_date_input,
+                        subsidy_before=subsidy_before,
+                        subsidy_after=subsidy_after,
+                    )
+                    dfs.append((scn, df))
 
-            best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
-            if not best.empty:
-                nameb = best.iloc[0]["Scenario"]
-                st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
+                    k1, k2, k3, k4 = st.columns(4)
+                    k1.metric("Fleet TH/s (final)", f"{df.attrs['fleet_ths']:,.0f}")
+                    k2.metric("IT Power kW (final)", f"{df.attrs['it_power_kw']:,.0f}")
+                    k3.metric("Total CAPEX (t0 + steps)", f"${df.attrs['total_capex_usd']:,.0f}")
+                    k4.metric("Payback (months)", df.attrs["payback_months"] if df.attrs["payback_months"] else "—")
 
-        with st.expander("📚 Scenari pubblici (Prossimi Step)"):
-            pub = list_public_scenarios("prossimi_step")  # <-- minuscolo + underscore
-            if not pub:
-                st.caption("Nessuno scenario pubblico salvato.")
-            else:
-                df_pub = pd.DataFrame(pub)
-                st.dataframe(df_pub)
+                    st.dataframe(
+                        df[["month","btc_price_usd","subsidy_btc","btc_month","rev_usd","energy_cost_usd","fixed_opex_usd","ebitda_usd","cashflow_usd","cum_cashflow_usd"]],
+                        key=f"df_steps_{idx}"
+                    )
+                    
+                    # Charts
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(x=df["month"], y=df["cashflow_usd"], name="Monthly Cashflow"))
+                    fig.add_trace(go.Scatter(x=df["month"], y=df["cum_cashflow_usd"], name="Cumulative", mode="lines+markers"))
+                    fig.update_layout(title=f"Cashflow — {scn.name} (with Steps)", xaxis_title="Month", yaxis_title="USD", barmode="group")
+                    st.plotly_chart(fig, use_container_width=True, key=f"cf_steps_{idx}")
 
-                # bottone per cancellare tutto
-                if st.button("❌ Elimina tutti gli scenari pubblici (Prossimi Step)"):
-                    clear_public_scenarios("prossimi_step")  # <-- qui
-                    st.success("Scenari pubblici (Prossimi Step) eliminati.")
-                    st.rerun()
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        f1 = go.Figure()
+                        f1.add_trace(go.Bar(x=df["month"], y=df["btc_month"], name="BTC / month"))
+                        f1.update_layout(title="BTC produced", xaxis_title="Month", yaxis_title="BTC")
+                        st.plotly_chart(f1, use_container_width=True, key=f"btc_steps_{idx}")
+                    with c2:
+                        f2 = go.Figure()
+                        f2.add_trace(go.Scatter(x=df["month"], y=df["fleet_ths"], mode="lines+markers", name="Fleet TH/s"))
+                        f2.update_layout(title="Fleet TH/s over time", xaxis_title="Month", yaxis_title="TH/s")
+                        st.plotly_chart(f2, use_container_width=True, key=f"ths_steps_{idx}")
+                    with c3:
+                        f3 = go.Figure()
+                        f3.add_trace(go.Scatter(x=df["month"], y=df["it_power_kw"], mode="lines+markers", name="IT kW"))
+                        f3.update_layout(title="IT Power (kW) over time", xaxis_title="Month", yaxis_title="kW")
+                        st.plotly_chart(f3, use_container_width=True, key=f"kw_steps_{idx}")
 
-                # dropdown per cancellare singolo scenario
-                idx_to_delete = st.selectbox(
-                    "Seleziona scenario da eliminare",
-                    options=list(range(len(pub))),
-                    format_func=lambda i: f"{i} — {pub[i].get('name','?')}",
-                    key="del_prossimi_step"  # (consiglio: niente spazi nei key)
-                )
-                if st.button("Elimina scenario selezionato (Prossimi Step)"):
-                    if delete_public_scenario("prossimi_step", idx_to_delete):  # <-- qui
-                        st.success("Scenario eliminato.")
+            with tabs[-1]:
+                comp_rows = []
+                for scn, df in dfs:
+                    comp_rows.append({
+                        "Scenario": scn.name,
+                        "Total CAPEX $ (t0+steps)": df.attrs['total_capex_usd'],
+                        "Payback months": df.attrs['payback_months'] or np.nan,
+                        "Year-1 EBITDA $": float(df.loc[:11, "ebitda_usd"].sum()),
+                        "Year-2 EBITDA $": float(df.loc[12:23, "ebitda_usd"].sum()) if len(df) >= 24 else np.nan,
+                        "Year-3 EBITDA $": float(df.loc[24:35, "ebitda_usd"].sum()) if len(df) >= 36 else np.nan,
+                        "Cum CF @ 36m $": float(df.loc[min(len(df)-1,35), "cum_cashflow_usd"]) if len(df) >= 12 else float(df.iloc[-1]["cum_cashflow_usd"]),
+                        "Fleet TH/s (final)": float(df.iloc[-1]["fleet_ths"]) if len(df) else 0.0,
+                        "IT kW (final)": float(df.iloc[-1]["it_power_kw"]) if len(df) else 0.0,
+                    })
+                comp_df = pd.DataFrame(comp_rows)
+                st.dataframe(comp_df, key="df_compare_classic")
+
+                best = comp_df.sort_values(by=["Cum CF @ 36m $"], ascending=False).head(1)
+                if not best.empty:
+                    nameb = best.iloc[0]["Scenario"]
+                    st.success(f"🏆 Best 36m cumulative cashflow: **{nameb}**")
+
+            with st.expander("📚 Scenari pubblici (Prossimi Step)"):
+                pub = list_public_scenarios("prossimi_step")  # <-- minuscolo + underscore
+                if not pub:
+                    st.caption("Nessuno scenario pubblico salvato.")
+                else:
+                    df_pub = pd.DataFrame(pub)
+                    st.dataframe(df_pub)
+
+                    # bottone per cancellare tutto
+                    if st.button("❌ Elimina tutti gli scenari pubblici (Prossimi Step)"):
+                        clear_public_scenarios("prossimi_step")  # <-- qui
+                        st.success("Scenari pubblici (Prossimi Step) eliminati.")
                         st.rerun()
+
+                    # dropdown per cancellare singolo scenario
+                    idx_to_delete = st.selectbox(
+                        "Seleziona scenario da eliminare",
+                        options=list(range(len(pub))),
+                        format_func=lambda i: f"{i} — {pub[i].get('name','?')}",
+                        key="del_prossimi_step"  # (consiglio: niente spazi nei key)
+                    )
+                    if st.button("Elimina scenario selezionato (Prossimi Step)"):
+                        if delete_public_scenario("prossimi_step", idx_to_delete):  # <-- qui
+                            st.success("Scenario eliminato.")
+                            st.rerun()
 
 
 # -----------------------------
