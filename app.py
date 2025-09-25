@@ -84,6 +84,53 @@ try:
 except Exception:
     HAS_PULP = False
 
+ERCOT_FILE = DATA_DIR / "ercot_prices.json"
+
+def _read_ercot_history() -> list[dict]:
+    if not ERCOT_FILE.exists():
+        return []
+    try:
+        with ERCOT_FILE.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def _write_ercot_history(data: list[dict]) -> None:
+    with ERCOT_FILE.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def save_ercot_price(location: str, price: float) -> None:
+    history = _read_ercot_history()
+    history.append({
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "location": location,
+        "price_usd_per_kwh": price,
+    })
+    _write_ercot_history(history)
+
+def list_ercot_prices() -> pd.DataFrame:
+    data = _read_ercot_history()
+    return pd.DataFrame(data)
+
+def fetch_ercot_last_24h(api_key: str, location: str) -> pd.DataFrame:
+    url = "https://api.gridstatus.io/v1/datasets/ercot_lmp_by_settlement_point/query"
+    params = {
+        "api_key": api_key,
+        "filter_column": "location",
+        "filter_value": location,
+        "time": "last_24h",
+        "limit": 5000
+    }
+    r = requests.get(url, params=params, timeout=15)
+    r.raise_for_status()
+    rows = r.json().get("data", [])
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["timestamp"] = pd.to_datetime(df["interval_start_utc"])
+        df["price_usd_per_kwh"] = df["lmp"].astype(float) / 1000.0
+    return df
+
+
 # -----------------------------
 # Config
 # -----------------------------
@@ -1141,6 +1188,14 @@ with st.sidebar:
                 ercot_price = fetch_ercot_rtm_price_per_kwh_api(GRIDSTATUS_API_KEY, location)
 
             st.metric("ERCOT RTM (live) $/kWh", f"{ercot_price:.5f}" if ercot_price is not None else "—")
+                    # --- Salvataggio automatico ogni ora ---
+            now = datetime.utcnow()
+            if ercot_price is not None:
+                last_saved = st.session_state.get("last_ercot_save")
+                if last_saved is None or (now - last_saved).total_seconds() >= 3600:
+                    save_ercot_price(location, float(ercot_price))
+                    st.session_state["last_ercot_save"] = now
+
             st.caption("Fonte: Grid Status API — ultimo SCED (5-min).")
 
     flat_default = float(ercot_price) if (ercot_price is not None) else 0.05
@@ -1182,6 +1237,23 @@ with st.sidebar:
                 st.error("CSV must include a 'price_usd_per_kwh' column.")
         except Exception as e:
             st.error(f"Failed to read CSV: {e}")
+
+    if price_source == "ERCOT RTM (Grid Status API)":
+        if st.checkbox("📈 Mostra storico ERCOT"):
+            df_hist = list_ercot_prices()
+            if not df_hist.empty:
+                st.dataframe(df_hist.tail(24))  # ultime 24 rilevazioni
+                fig_hist = go.Figure()
+                fig_hist.add_trace(go.Scatter(
+                    x=pd.to_datetime(df_hist["timestamp"]),
+                    y=df_hist["price_usd_per_kwh"],
+                    mode="lines+markers"
+                ))
+                fig_hist.update_layout(title=f"Storico prezzi ERCOT ({location})", xaxis_title="Ora", yaxis_title="$/kWh")
+                st.plotly_chart(fig_hist, use_container_width=True)
+            else:
+                st.caption("Nessun dato salvato nello storico ancora.")
+
 
 
 # -----------------------------
