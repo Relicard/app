@@ -1212,17 +1212,17 @@ if mode == "Classica":
 
     if "scenarios" not in st.session_state:
         st.session_state.scenarios: List[Scenario] = [] # type: ignore
+    
+    with st.expander("2) Fleet (units per model)", expanded=True):
+        fleet_counts_classic: Dict[str, int] = {}
+        fleet_cols = st.columns(3)
+        for i, model_name in enumerate(catalog.keys()):
+            key = f"fleet_classic_{model_name}"
+            val = fleet_cols[i % 3].number_input(
+                model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
+            )
+            fleet_counts_classic[model_name] = int(val)
 
-    # --- Fleet grid OUTSIDE the form for real-time budget calc ---
-    st.markdown("**Fleet (units per model)**")
-    fleet_counts_classic: Dict[str, int] = {}
-    fleet_cols = st.columns(3)
-    for i, model_name in enumerate(catalog.keys()):
-        key = f"fleet_classic_{model_name}"
-        val = fleet_cols[i % 3].number_input(
-            model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
-        )
-        fleet_counts_classic[model_name] = int(val)
 
     # Real-time ASIC budget & live metrics
     def _fleet_sum(catalog, counts):
@@ -1248,14 +1248,14 @@ if mode == "Classica":
             st.error(f"⚠️ Fuori budget: mancano ${-delta:,.0f}")
 
     # --- Form for the rest + submit ---
-    with st.form("new_scenario"):
-        st.markdown("**Parametri scenario** (premi *Add scenario* per salvare)")
-        cols = st.columns(3)
-        name = cols[0].text_input("Name", value=f"Scenario {len(st.session_state.scenarios)+1}")
-        pue = cols[1].number_input("PUE", min_value=1.0, max_value=2.0, value=1.08, step=0.01)
-        uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5)
+    with st.expander("3) Parametri scenario", expanded=True):
+        with st.form("new_scenario"):
+            cols = st.columns(3)
+            name = cols[0].text_input("Name", value=f"Scenario {len(st.session_state.scenarios)+1}")
+            pue = cols[1].number_input("PUE", min_value=1.0, max_value=2.0, value=1.08, step=0.01)
+            uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5)
 
-        st.markdown("**Costs (USD)**")
+            st.markdown("**Costs (USD)**")
         c1, c2, c3, c4 = st.columns(4)
         fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0)
         var_price = c2.number_input("Variable $/kWh (scenario override)", min_value=0.0, step=0.001, value=float(flat_price), format="%.3f")
