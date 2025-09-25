@@ -5,7 +5,7 @@ from __future__ import annotations
 import math, time
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
 import requests, pandas as pd, numpy as np # type: ignore
 from dateutil.relativedelta import relativedelta  # type: ignore
@@ -113,30 +113,54 @@ def list_ercot_prices() -> pd.DataFrame:
     return pd.DataFrame(data)
 
 def fetch_ercot_last_24h(api_key: str, location: str) -> pd.DataFrame:
+    """
+    Ultime 24 ore di LMP per settlement point ERCOT.
+    Converte $/MWh -> $/kWh dividendo per 1000.
+    """
     url = "https://api.gridstatus.io/v1/datasets/ercot_lmp_by_settlement_point/query"
-    end = datetime.utcnow()
+    end = datetime.now(timezone.utc)
     start = end - timedelta(hours=24)
+
     params = {
-        "api_key": api_key,
         "filter_column": "location",
         "filter_value": location,
-        "start": start.isoformat(timespec="seconds") + "Z",
-        "end": end.isoformat(timespec="seconds") + "Z",
-        "limit": 5000
+        # >>> parametri corretti per l'intervallo temporale <<<
+        "start_time": start.isoformat(timespec="seconds"),
+        "end_time": end.isoformat(timespec="seconds"),
+        "order": "asc",
+        "page_size": 1000,   # bastano per 24h a 5-min (≈288 righe)
     }
+    headers = {
+        "x-api-key": api_key,              # consigliato da Grid Status
+        "User-Agent": "DESMO-Optimizer/1.1"
+    }
+
     try:
-        r = requests.get(url, params=params, timeout=15)
+        r = requests.get(url, params=params, headers=headers, timeout=20)
         r.raise_for_status()
         rows = r.json().get("data", [])
         df = pd.DataFrame(rows)
         if df.empty:
             return df
-        df["timestamp"] = pd.to_datetime(df["interval_start_utc"])
-        df["price_usd_per_kwh"] = df["lmp"].astype(float) / 1000.0
+
+        # timestamp del dataset
+        if "interval_start_utc" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["interval_start_utc"], utc=True)
+        elif "time" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["time"], utc=True)
+        else:
+            # fallback: prova a indovinare
+            ts_col = next((c for c in df.columns if "time" in c or "utc" in c), None)
+            df["timestamp"] = pd.to_datetime(df[ts_col], utc=True) if ts_col else pd.NaT
+
+        # $/MWh -> $/kWh
+        df["price_usd_per_kwh"] = pd.to_numeric(df["lmp"], errors="coerce") / 1000.0
+        df["location"] = location
         return df[["timestamp", "price_usd_per_kwh", "location"]].sort_values("timestamp")
     except Exception as e:
         st.error(f"Errore fetch_ercot_last_24h: {e}")
         return pd.DataFrame()
+
 
 
 
