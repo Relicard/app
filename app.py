@@ -118,15 +118,15 @@ def fetch_ercot_last_24h(api_key: str, location: str) -> pd.DataFrame:
     """
     url = "https://api.gridstatus.io/v1/datasets/ercot_lmp_by_settlement_point/query"
     params = {
+        "api_key": api_key,          # <-- API key passata come query param (non header)
         "filter_column": "location",
         "filter_value": location,
         "time": "last_24h",
         "limit": 5000
     }
-    headers = {"Authorization": f"Bearer {api_key}"}
 
     try:
-        r = requests.get(url, params=params, headers=headers, timeout=15)
+        r = requests.get(url, params=params, timeout=15)
         r.raise_for_status()
         rows = r.json().get("data", [])
         df = pd.DataFrame(rows)
@@ -140,6 +140,7 @@ def fetch_ercot_last_24h(api_key: str, location: str) -> pd.DataFrame:
     except Exception as e:
         st.error(f"Errore fetch_ercot_last_24h: {e}")
         return pd.DataFrame()
+
 
 
 
