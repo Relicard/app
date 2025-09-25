@@ -1443,15 +1443,15 @@ elif mode == "Prossimi Step":
         st.session_state.future_steps: List[FutureStep] = [] # type: ignore
 
     # --- Fleet grid OUTSIDE the form for real-time budget calc (t0) ---
-    st.markdown("**Fleet (units per model) — t0**")
-    fleet_counts_ns: Dict[str, int] = {}
-    fcols_ns = st.columns(3)
-    for i, model_name in enumerate(catalog.keys()):
-        key = f"fleet_ns_{model_name}"
-        val = fcols_ns[i % 3].number_input(
-            model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
-        )
-        fleet_counts_ns[model_name] = int(val)
+    with st.expander("2) Fleet (units per model) — t0", expanded=True):
+        fleet_counts_ns: Dict[str, int] = {}
+        fcols_ns = st.columns(3)
+        for i, model_name in enumerate(catalog.keys()):
+            key = f"fleet_ns_{model_name}"
+            val = fcols_ns[i % 3].number_input(
+                model_name, min_value=0, step=1, value=st.session_state.get(key, 0), key=key
+            )
+            fleet_counts_ns[model_name] = int(val)
 
     live_ths_ns, live_kw_ns, live_asic_capex_ns = ( 
         sum(catalog[m].hashrate_ths * n for m, n in fleet_counts_ns.items() if m in catalog),
@@ -1474,43 +1474,44 @@ elif mode == "Prossimi Step":
             st.error(f"⚠️ Fuori budget t0: mancano ${-delta:,.0f}")
 
     # --- Base scenario form ---
-    with st.form("new_scenario_ns"):
-        st.markdown("**Add base scenario (t0)**")
-        cols = st.columns(3)
-        name = cols[0].text_input("Name", value=f"Plan {len(st.session_state.scenarios_ns)+1}")
-        pue = cols[1].number_input("PUE", min_value=1.0, max_value=2.0, value=1.08, step=0.01, key="pue_ns")
-        uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5, key="uptime_ns")
+    with st.expander("3) Parametri scenario base (t0)", expanded=True):
+        with st.form("new_scenario_ns"):
+            st.markdown("**Add base scenario (t0)**")
+            cols = st.columns(3)
+            name = cols[0].text_input("Name", value=f"Plan {len(st.session_state.scenarios_ns)+1}")
+            pue = cols[1].number_input("PUE", min_value=1.0, max_value=2.0, value=1.08, step=0.01, key="pue_ns")
+            uptime_pct = cols[2].number_input("Uptime %", min_value=0.0, max_value=100.0, value=97.0, step=0.5, key="uptime_ns")
 
-        st.markdown("**Costs (USD)**")
-        c1, c2, c3, c4 = st.columns(4)
-        fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0, key="fop_ns")
-        var_price = c2.number_input("Variable $/kWh (scenario override)", min_value=0.0, step=0.001, value=float(flat_price), format="%.3f", key="varp_ns")
-        capex_asics = c3.number_input("CAPEX ASICs (0 = compute from catalog)", min_value=0.0, step=1000.0, value=0.0, key="ascc_ns")
-        capex_container = c4.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=60000.0, key="cont_ns")
+            st.markdown("**Costs (USD)**")
+            c1, c2, c3, c4 = st.columns(4)
+            fixed_opex = c1.number_input("Fixed OPEX / month", min_value=0.0, step=100.0, value=13950.0, key="fop_ns")
+            var_price = c2.number_input("Variable $/kWh (scenario override)", min_value=0.0, step=0.001, value=float(flat_price), format="%.3f", key="varp_ns")
+            capex_asics = c3.number_input("CAPEX ASICs (0 = compute from catalog)", min_value=0.0, step=1000.0, value=0.0, key="ascc_ns")
+            capex_container = c4.number_input("CAPEX Containers", min_value=0.0, step=1000.0, value=60000.0, key="cont_ns")
 
-        c5, c6, c7, c8 = st.columns(4)
-        capex_transformer = c5.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0, key="trf_ns")
-        other_capex = c6.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0, key="oth_ns")
-        btc_price_override = c7.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0, key="btc_ns")
-        default_avg_fees_btc = float(avg_fees_1k[0]) if avg_fees_1k is not None else float(avg_fees or 0.0)
+            c5, c6, c7, c8 = st.columns(4)
+            capex_transformer = c5.number_input("CAPEX Transformer", min_value=0.0, step=1000.0, value=50000.0, key="trf_ns")
+            other_capex = c6.number_input("Other CAPEX", min_value=0.0, step=1000.0, value=140_000.0, key="oth_ns")
+            btc_price_override = c7.number_input("BTC price override (0 = live path)", min_value=0.0, step=1000.0, value=0.0, key="btc_ns")
+            default_avg_fees_btc = float(avg_fees_1k[0]) if avg_fees_1k is not None else float(avg_fees or 0.0)
 
-        avg_fees_override = c8.number_input(
-            "Avg fees per block BTC (valore live)",
-            min_value=0.0,
-            step=0.00000001,
-            value=default_avg_fees_btc,
-            format="%.8f",
-            key="avg_fees_override_classic",
-        )
+            avg_fees_override = c8.number_input(
+                "Avg fees per block BTC (valore live)",
+                min_value=0.0,
+                step=0.00000001,
+                value=default_avg_fees_btc,
+                format="%.8f",
+                key="avg_fees_override_classic",
+            )
 
-        c9, c10, c11 = st.columns(3)
-        monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_ns")
-        btc_price_mom = c10.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1, key="prg_ns")
-        months_horizon = int(c11.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6, key="hor_ns"))
-        public_box_ns = st.checkbox("Salva base scenario t0 come pubblico", value=False, key="save_public_ns")
-        author_name_ns = st.text_input("Autore (facoltativo)", value="", key="author_ns")
+            c9, c10, c11 = st.columns(3)
+            monthly_net_growth = c9.number_input("Network hashrate growth % / month", min_value=-50.0, max_value=50.0, value=0.0, step=0.1, key="netg_ns")
+            btc_price_mom = c10.number_input("BTC price growth % / month", min_value=-50.0, max_value=100.0, value=0.0, step=0.1, key="prg_ns")
+            months_horizon = int(c11.number_input("Months horizon", min_value=6, max_value=120, value=60, step=6, key="hor_ns"))
+            public_box_ns = st.checkbox("Salva base scenario t0 come pubblico", value=False, key="save_public_ns")
+            author_name_ns = st.text_input("Autore (facoltativo)", value="", key="author_ns")
 
-        submitted = st.form_submit_button("➕ Add base scenario (t0)")
+            submitted = st.form_submit_button("➕ Add base scenario (t0)")
 
     if submitted:
         scn = Scenario(
