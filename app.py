@@ -1253,6 +1253,28 @@ with st.sidebar:
                 st.plotly_chart(fig_hist, use_container_width=True)
             else:
                 st.caption("Nessun dato salvato nello storico ancora.")
+    
+    # --- storico 24h via API live ---
+    if price_source == "ERCOT RTM (Grid Status API)":
+        if st.checkbox("📊 Mostra ultime 24h (API live)"):
+            df_24h = fetch_ercot_last_24h(GRIDSTATUS_API_KEY, location)
+            if not df_24h.empty:
+                st.dataframe(df_24h.tail(48))  # mostra ultime 48 rilevazioni (≈12h se intervallo 15min, ≈4h se 5min)
+                fig24 = go.Figure()
+                fig24.add_trace(go.Scatter(
+                    x=df_24h["timestamp"],
+                    y=df_24h["price_usd_per_kwh"],
+                    mode="lines+markers"
+                ))
+                fig24.update_layout(
+                    title=f"Prezzi ERCOT ultime 24h ({location})",
+                    xaxis_title="Ora",
+                    yaxis_title="$/kWh"
+                )
+                st.plotly_chart(fig24, use_container_width=True)
+            else:
+                st.caption("Nessun dato disponibile dalle API per le ultime 24h.")
+
 
 
 
