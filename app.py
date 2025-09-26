@@ -1223,7 +1223,16 @@ with st.sidebar:
             with st.spinner("Recupero prezzo ERCOT RTM…"):
                 ercot_price = fetch_ercot_rtm_price_per_kwh_api(GRIDSTATUS_API_KEY, location)
 
-            st.metric("ERCOT RTM (live) $/kWh", f"{ercot_price:.5f}" if ercot_price is not None else "—")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("ERCOT RTM (live) $/kWh", f"{ercot_price:.5f}" if ercot_price is not None else "—")
+            with col2:
+                if ercot_price is not None:
+                    df_24h = fetch_ercot_last_24h(GRIDSTATUS_API_KEY, location)
+                    if not df_24h.empty:
+                        avg_24h = df_24h["price_usd_per_kwh"].mean()
+                        st.metric("Media ultime 24h ERCOT $/kWh", f"{avg_24h:.5f}")
+                        
                     # --- Salvataggio automatico ogni ora ---
             now = datetime.utcnow()
             if ercot_price is not None:
