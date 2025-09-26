@@ -1292,10 +1292,9 @@ with st.sidebar:
                     xaxis_title="Ora",
                     yaxis_title="$/kWh"
                 )
+                st.plotly_chart(fig24, use_container_width=True)
                 avg_24h = df_24h["price_usd_per_kwh"].mean()
                 st.metric("Media ultime 24h ERCOT $/kWh", f"{avg_24h:.5f}")
-                st.plotly_chart(fig24, use_container_width=True)
-
 
 
 
