@@ -1273,7 +1273,8 @@ with st.sidebar:
                 st.error("CSV must include a 'price_usd_per_kwh' column.")
         except Exception as e:
             st.error(f"Failed to read CSV: {e}")
-
+            
+    # --- storico 24h via API live ---
     if price_source == "ERCOT RTM (Grid Status API)":
         if st.checkbox("📈 Mostra storico ERCOT"):
             df_hist = list_ercot_prices()
@@ -1296,7 +1297,7 @@ with st.sidebar:
         if st.checkbox("📊 Mostra ultime 24h (API live)"):
             df_24h = fetch_ercot_last_24h(GRIDSTATUS_API_KEY, location)
             if not df_24h.empty:
-                st.dataframe(df_24h)  # mostra ultime 48 rilevazioni (≈12h se intervallo 15min, ≈4h se 5min)
+                st.dataframe(df_24h)
                 fig24 = go.Figure()
                 fig24.add_trace(go.Scatter(
                     x=df_24h["timestamp"],
@@ -1309,8 +1310,9 @@ with st.sidebar:
                     yaxis_title="$/kWh"
                 )
                 st.plotly_chart(fig24, use_container_width=True)
-            else:
-                st.caption("Nessun dato disponibile dalle API per le ultime 24h.")
+                avg_24h = df_24h["price_usd_per_kwh"].mean()
+                st.metric("Media ultime 24h ERCOT $/kWh", f"{avg_24h:.5f}")
+
 
 
 # -----------------------------
