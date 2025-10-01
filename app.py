@@ -405,6 +405,7 @@ DEFAULT_CATALOG: Dict[str, AsicModel] = {
     "Bitmain S21XP 270T": AsicModel("Bitmain S21XP 270T", hashrate_ths=270.0, power_kw=3.645, unit_price_usd=5805.0, disponibility="now"),
     "Bitdeer A2 Pro Air 226TH": AsicModel("Bitdeer A2 Pro air 226TH", hashrate_ths=226.0, power_kw=3.729, unit_price_usd=3557.0, disponibility="November"),
     "Bitdeer A2 Pro Hydro 500TH": AsicModel("Bitdeer A2 Pro Hydro 500TH", hashrate_ths=500.0, power_kw=7.450, unit_price_usd=7500.0, disponibility="November"),
+    "Bitmain T21": AsicModel("Bitmain T21", hashrate_ths=190.0, power_kw=3.310, unit_price_usd=1950.0, disponibility="Now"),
 }
 
 @dataclass
