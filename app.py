@@ -1230,6 +1230,17 @@ with st.sidebar:
         net_ths = difficulty_to_network_hashrate_ths(diff) if diff else float("nan")
 
 with st.sidebar:
+    st.subheader("Debug Antpool secrets")
+    st.write("USER_ID set:", bool(ANTPOOL_USER_ID))
+    st.write("API_KEY set:", bool(ANTPOOL_API_KEY))
+    st.write("API_SECRET set:", bool(ANTPOOL_API_SECRET))
+
+    # Facoltativo: mostra solo i primi caratteri, così controlli che siano quelli giusti
+    st.write("USER_ID (mask):", ANTPOOL_USER_ID[:4] + "…" if ANTPOOL_USER_ID else "None")
+    st.write("API_KEY (mask):", ANTPOOL_API_KEY[:4] + "…" if ANTPOOL_API_KEY else "None")
+
+
+with st.sidebar:
     st.divider()
     st.subheader("Antpool (desmo-test)")
 
