@@ -6,4 +6,4 @@ numpy
 plotly
 python-dateutil
 pulp
-solidity-antpool==0.1.3
+solidity-antpool==0.1.1
