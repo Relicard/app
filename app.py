@@ -16,6 +16,7 @@ import os
 import json
 from pathlib import Path
 from threading import RLock
+from AntPool import antpool as antpool_client
 
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
@@ -77,6 +78,12 @@ try:
     import gridstatus as gs  # type: ignore
 except Exception:
     HAS_GRIDSTATUS = False
+
+
+ANTPOOL_USER_ID = get_secret("ANTPOOL_USER_ID")
+ANTPOOL_API_KEY = get_secret("ANTPOOL_API_KEY")
+ANTPOOL_API_SECRET = get_secret("ANTPOOL_API_SECRET")
+
 
 
 try:
@@ -305,6 +312,43 @@ def fetch_avg_fees_last_n_blocks_btc(n: int = 1000) -> Optional[tuple[float, int
     except Exception:
         return None
 
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_antpool_overview() -> Optional[dict]:
+    """
+    Recupera l'overview di Antpool per l'account configurato.
+    Ritorna il dict 'data' se ok, altrimenti None.
+
+    Campi tipici:
+      - hsLast10m : hash rate ultimi 10 minuti (stringa, in H/s)
+      - hsLast1h  : hash rate ultima ora
+      - hsLast1d  : hash rate ultimo giorno
+    """
+    if not (ANTPOOL_USER_ID and ANTPOOL_API_KEY and ANTPOOL_API_SECRET):
+        return None
+
+    try:
+        client = antpool_client.AntPool(
+            ANTPOOL_USER_ID,
+            ANTPOOL_API_KEY,
+            ANTPOOL_API_SECRET,
+        )
+        resp = client.get_overview()   # come da doc solidity-antpool
+
+        # La libreria, da doc PyPI, ritorna qualcosa tipo:
+        # {"code": 0, "message": "ok", "data": {...}}
+        if not isinstance(resp, dict):
+            return None
+
+        if resp.get("code") != 0:
+            # facoltativo: loggare il messaggio
+            st.warning(f"Antpool API error: {resp.get('message')}")
+            return None
+
+        return resp.get("data", None)
+    except Exception as e:
+        st.error(f"Errore chiamando Antpool: {e}")
+        return None
 
     
 @st.cache_data(ttl=60)
@@ -1185,6 +1229,34 @@ with st.sidebar:
         avg_fees_1k = fetch_avg_fees_last_n_blocks_btc(1000)
         net_ths = difficulty_to_network_hashrate_ths(diff) if diff else float("nan")
 
+with st.sidebar:
+    st.divider()
+    st.subheader("Antpool (desmo-test)")
+
+    overview = fetch_antpool_overview()
+    if overview is None:
+        st.caption("Impossibile leggere i dati da Antpool (controlla chiavi / permessi).")
+    else:
+        # I campi sono stringhe enormi di H/s. Convertiamo a TH/s:
+        def to_ths(value: str) -> float:
+            try:
+                return float(value) / 1e12
+            except Exception:
+                return float("nan")
+
+        hs_10m_ths = to_ths(overview.get("hsLast10m", "0"))
+        hs_1h_ths  = to_ths(overview.get("hsLast1h", "0"))
+        hs_1d_ths  = to_ths(overview.get("hsLast1d", "0"))
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("TH/s (10 min)", f"{hs_10m_ths:,.0f}")
+        c2.metric("TH/s (1h)",     f"{hs_1h_ths:,.0f}")
+        c3.metric("TH/s (1d)",     f"{hs_1d_ths:,.0f}")
+
+        st.caption(f"Worker attivi: {overview.get('activeWorkerNum', 'N/A')} / "
+                   f"{overview.get('totalWorkerNum', 'N/A')}")
+
+
     col1, col2 = st.columns(2)
     with col1:
         st.metric("BTC Spot (USD)", f"{price_usd:,.0f}" if price_usd==price_usd else "—")
@@ -1303,6 +1375,8 @@ with st.sidebar:
                 st.plotly_chart(fig24, use_container_width=True)
                 avg_24h = df_24h["price_usd_per_kwh"].mean()
                 st.metric("Media ultime 24h ERCOT $/kWh", f"{avg_24h:.5f}")
+    
+    
 
 
 
