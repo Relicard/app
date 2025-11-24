@@ -11,6 +11,7 @@ import requests, pandas as pd, numpy as np # type: ignore
 from dateutil.relativedelta import relativedelta  # type: ignore
 import streamlit as st # type: ignore
 import plotly.graph_objects as go # type: ignore
+from plotly.subplots import make_subplots
 import os
 import json
 from pathlib import Path
@@ -1149,7 +1150,13 @@ st.title("⚡ DESMO Bitcoin Mining Optimizer")
 st.caption("Model mining economics, compare scenarios, schedule future steps and optimize ASIC budget.")
 
 top_cols = st.columns([1,1,2])
-mode = top_cols[0].radio("Mode", ["Classica", "Prossimi Step", "Hosting"], index=0, horizontal=True)
+mode = top_cols[0].radio(
+    "Mode",
+    ["Classica", "Prossimi Step", "Hosting", "Monitor"],  # <-- aggiunto "Monitor"
+    index=0,
+    horizontal=True
+)
+
 
 # Halving controls (data stimata in base all'altezza attuale → 10 min/blocco)
 with top_cols[1]:
@@ -2139,6 +2146,164 @@ elif mode == "Hosting":
                     if delete_public_scenario("hosting", idx_to_delete):
                         st.success("Scenario eliminato.")
                         st.rerun()
+
+
+                        # -----------------------------
+# Modalità Monitor: Hashrate vs ERCOT
+# -----------------------------
+elif mode == "Monitor":
+    st.subheader("📈 Hashrate pool vs prezzo ERCOT LZ_WEST")
+
+    st.markdown(
+        """
+        Carica un CSV con l'hashrate aggregato della pool (Antpool, sommato su tutti gli account).
+        
+        **Formato consigliato CSV:**
+        - `timestamp`: ISO 8601 (es. `2025-11-24T03:00:00Z` oppure `2025-11-24 03:00:00`)
+        - una o più colonne numeriche con l'hashrate in **TH/s** (es. `account1_ths, account2_ths, ...`)
+        
+        Il tool somma tutte le colonne numeriche e mostra la serie in **PH/s**.
+        """
+    )
+
+    # Upload hashrate pool (Antpool)
+    hash_file = st.file_uploader(
+        "Carica CSV hashrate pool (Antpool)",
+        type=["csv"],
+        key="hashrate_csv_monitor"
+    )
+
+    # Carichiamo storico ERCOT salvato in ercot_prices.json
+    ercot_df = list_ercot_prices()
+    if ercot_df.empty:
+        st.warning("⚠️ Nessun dato ERCOT salvato in `ercot_prices.json`. Apri la modalità con ERCOT RTM attivo per iniziare a loggare i prezzi.")
+        ercot_df = None
+    else:
+        # parse timestamp & filtra LZ_WEST
+        ercot_df["timestamp"] = pd.to_datetime(ercot_df["timestamp"], utc=True, errors="coerce")
+        ercot_df = ercot_df.dropna(subset=["timestamp"])
+        # per sicurezza, filtra solo LZ_WEST (o quello che ti interessa)
+        ercot_location = st.selectbox(
+            "Location ERCOT da mostrare",
+            sorted(ercot_df["location"].unique()),
+            index=list(sorted(ercot_df["location"].unique())).index("LZ_WEST") if "LZ_WEST" in ercot_df["location"].unique() else 0,
+            key="ercot_loc_monitor"
+        )
+        ercot_df = ercot_df[ercot_df["location"] == ercot_location].copy()
+        ercot_df = ercot_df.set_index("timestamp").sort_index()
+
+    if hash_file is None:
+        st.info("⬆️ Carica il CSV con l'hashrate per vedere il grafico.")
+        if ercot_df is not None:
+            with st.expander("👉 Vedi solo storico ERCOT salvato"):
+                st.dataframe(ercot_df.tail(200))
+        st.stop()
+
+    # --- Parsing CSV hashrate ---
+    try:
+        hdf = pd.read_csv(hash_file)
+    except Exception as e:
+        st.error(f"Errore nel leggere il CSV hashrate: {e}")
+        st.stop()
+
+    if "timestamp" not in hdf.columns:
+        st.error("Il CSV deve avere una colonna 'timestamp'.")
+        st.stop()
+
+    # parse timestamp
+    hdf["timestamp"] = pd.to_datetime(hdf["timestamp"], utc=True, errors="coerce")
+    hdf = hdf.dropna(subset=["timestamp"])
+    hdf = hdf.set_index("timestamp").sort_index()
+
+    # individua colonne numeriche da sommare (es. vari account Antpool)
+    num_cols = hdf.select_dtypes(include="number").columns.tolist()
+    if not num_cols:
+        st.error("Nel CSV non ci sono colonne numeriche di hashrate (TH/s). Aggiungi almeno una colonna numerica.")
+        st.stop()
+
+    st.write(f"Colonne di hashrate utilizzate (somma): `{', '.join(num_cols)}`")
+
+    # somma su tutte le colonne numeriche → TH/s totali
+    hdf["hashrate_ths_total"] = hdf[num_cols].sum(axis=1)
+
+    # converte in PH/s per avere numeri più leggibili
+    hdf["hashrate_phs"] = hdf["hashrate_ths_total"] / 1_000.0
+
+    # opzionale: resampling frequenza
+    freq_label = st.selectbox(
+        "Risoluzione temporale per il grafico",
+        options=["5T", "15T", "30T", "H", "4H"],
+        format_func=lambda x: {
+            "5T": "5 minuti",
+            "15T": "15 minuti",
+            "30T": "30 minuti",
+            "H": "1 ora",
+            "4H": "4 ore",
+        }.get(x, x),
+        index=1,
+        key="freq_monitor"
+    )
+
+    # resample hashrate
+    h_res = hdf[["hashrate_phs"]].resample(freq_label).mean()
+
+    if ercot_df is None or ercot_df.empty:
+        st.warning("Mostro solo l'hashrate (nessun dato ERCOT disponibile).")
+        merged = h_res.copy()
+        merged["price_usd_per_kwh"] = np.nan
+    else:
+        # resample ERCOT sulla stessa frequenza
+        e_res = ercot_df[["price_usd_per_kwh"]].resample(freq_label).mean()
+
+        # allinea periodo comune
+        start = max(h_res.index.min(), e_res.index.min())
+        end = min(h_res.index.max(), e_res.index.max())
+        h_res = h_res.loc[(h_res.index >= start) & (h_res.index <= end)]
+        e_res = e_res.loc[(e_res.index >= start) & (e_res.index <= end)]
+
+        merged = h_res.join(e_res, how="inner")
+
+    if merged.empty:
+        st.warning("Non ci sono dati sovrapposti tra hashrate e prezzi ERCOT nel periodo selezionato.")
+        st.stop()
+
+    # --- Grafico a linee con doppio asse Y ---
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Scatter(
+            x=merged.index,
+            y=merged["hashrate_phs"],
+            name="Hashrate pool (PH/s)",
+            mode="lines"
+        ),
+        secondary_y=False,
+    )
+
+    if merged["price_usd_per_kwh"].notna().any():
+        fig.add_trace(
+            go.Scatter(
+                x=merged.index,
+                y=merged["price_usd_per_kwh"],
+                name=f"ERCOT {ercot_location} ($/kWh)",
+                mode="lines"
+            ),
+            secondary_y=True,
+        )
+
+    fig.update_layout(
+        title="Hashrate pool vs prezzo ERCOT",
+        xaxis_title="Tempo (UTC)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        hovermode="x unified",
+    )
+    fig.update_yaxes(title_text="Hashrate pool (PH/s)", secondary_y=False)
+    fig.update_yaxes(title_text="Prezzo energia ($/kWh)", secondary_y=True)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("🔎 Dati uniti (hashrate + ERCOT)"):
+        st.dataframe(merged.reset_index().rename(columns={"index": "timestamp"}))
+
 
 
 st.divider()
