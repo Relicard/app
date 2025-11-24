@@ -16,7 +16,6 @@ import os
 import json
 from pathlib import Path
 from threading import RLock
-from AntPool import antpool as antpool_client
 
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
@@ -83,6 +82,47 @@ except Exception:
 ANTPOOL_USER_ID = get_secret("ANTPOOL_USER_ID")
 ANTPOOL_API_KEY = get_secret("ANTPOOL_API_KEY")
 ANTPOOL_API_SECRET = get_secret("ANTPOOL_API_SECRET")
+
+import hmac, hashlib
+
+ANTPOOL_BASE_URL = "https://antpool.com/api/"
+
+def _antpool_make_signature(user_id: str, api_key: str, api_secret: str, nonce: str) -> str:
+    """
+    Firma: HMAC-SHA256 su (userId + api_key + nonce), esattamente come nel test_antpool.py
+    """
+    msg = (user_id + api_key + nonce).encode("utf-8")
+    secret_bytes = api_secret.encode("utf-8")
+    return hmac.new(secret_bytes, msg=msg, digestmod=hashlib.sha256).hexdigest().upper()
+
+def _antpool_post(endpoint: str, extra_params: dict) -> dict:
+    """
+    Chiamata POST generica ad Antpool con firma corretta.
+    endpoint: es. 'accountOverview.htm', 'userHashrateChart.htm', ecc.
+    """
+    if not (ANTPOOL_USER_ID and ANTPOOL_API_KEY and ANTPOOL_API_SECRET):
+        raise RuntimeError("ANTPOOL_USER_ID / ANTPOOL_API_KEY / ANTPOOL_API_SECRET mancanti")
+
+    nonce = str(int(time.time() * 1000))
+    signature = _antpool_make_signature(ANTPOOL_USER_ID, ANTPOOL_API_KEY, ANTPOOL_API_SECRET, nonce)
+
+    payload = {
+        "key": ANTPOOL_API_KEY,
+        "nonce": nonce,
+        "signature": signature,
+        "coin": "BTC",          # default BTC
+    }
+    payload.update(extra_params or {})
+
+    url = ANTPOOL_BASE_URL + endpoint
+    r = requests.post(url, data=payload, timeout=15)
+    r.raise_for_status()
+    data = r.json()
+    # Tutte le private API usano code==0 per OK
+    if data.get("code") != 0:
+        raise RuntimeError(f"Antpool error {data.get('code')}: {data.get('message')}")
+    return data
+
 
 
 
@@ -316,39 +356,64 @@ def fetch_avg_fees_last_n_blocks_btc(n: int = 1000) -> Optional[tuple[float, int
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_antpool_overview() -> Optional[dict]:
     """
-    Recupera l'overview di Antpool per l'account configurato.
-    Ritorna il dict 'data' se ok, altrimenti None.
-
-    Campi tipici:
-      - hsLast10m : hash rate ultimi 10 minuti (stringa, in H/s)
-      - hsLast1h  : hash rate ultima ora
-      - hsLast1d  : hash rate ultimo giorno
+    Recupera l'overview di Antpool per il sub-account configurato.
+    Usa la stessa firma testata nel file test_antpool.py.
     """
     if not (ANTPOOL_USER_ID and ANTPOOL_API_KEY and ANTPOOL_API_SECRET):
         return None
 
     try:
-        client = antpool_client.AntPool(
-            ANTPOOL_USER_ID,
-            ANTPOOL_API_KEY,
-            ANTPOOL_API_SECRET,
+        resp = _antpool_post(
+            "accountOverview.htm",
+            {"userId": ANTPOOL_USER_ID}
         )
-        resp = client.get_overview()   # come da doc solidity-antpool
-
-        # La libreria, da doc PyPI, ritorna qualcosa tipo:
-        # {"code": 0, "message": "ok", "data": {...}}
-        if not isinstance(resp, dict):
-            return None
-
-        if resp.get("code") != 0:
-            # facoltativo: loggare il messaggio
-            st.warning(f"Antpool API error: {resp.get('message')}")
-            return None
-
         return resp.get("data", None)
     except Exception as e:
-        st.error(f"Errore chiamando Antpool: {e}")
+        st.warning(f"Errore chiamando Antpool overview: {e}")
         return None
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_antpool_hashrate_chart(
+    chart_type: int = 2,              # 1 = minuti, 2 = ore, 3 = giorni (da doc)
+    start_date: Optional[datetime] = None,
+) -> Optional[pd.DataFrame]:
+    """
+    Legge la curva di hashrate (sub-account) da Antpool con userHashrateChart.htm.
+    Ritorna un DataFrame con colonne: timestamp (UTC) e ths (TH/s).
+    """
+    if not (ANTPOOL_USER_ID and ANTPOOL_API_KEY and ANTPOOL_API_SECRET):
+        return None
+
+    params = {
+        "coinType": "BTC",
+        "userId": ANTPOOL_USER_ID,
+        "userWorkerId": "",   # vuoto => sub-account intero
+        "type": chart_type,   # 2 = hourly hashrate
+    }
+    if start_date is not None:
+        # formato richiesto: yyyy-MM-dd HH:mm:ss
+        params["date"] = start_date.strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        resp = _antpool_post("userHashrateChart.htm", params)
+        data = resp.get("data", {})
+        rows = data.get("poolSpeedBeanList", [])
+        if not rows:
+            return None
+
+        df = pd.DataFrame(rows)
+
+        # Da doc: "date": timestamp, "speed": hashrate value
+        # ATTENZIONE: spesso è in millisecondi; se il grafico risulta "strano",
+        # cambia unit="s".
+        df["timestamp"] = pd.to_datetime(df["date"], unit="ms", utc=True, errors="coerce")
+        df["ths"] = pd.to_numeric(df["speed"], errors="coerce") / 1e12  # da H/s a TH/s
+        df = df.dropna(subset=["timestamp", "ths"]).sort_values("timestamp")
+        return df[["timestamp", "ths"]]
+    except Exception as e:
+        st.warning(f"Errore Antpool hashrate chart: {e}")
+        return None
+
 
     
 @st.cache_data(ttl=60)
@@ -1266,6 +1331,32 @@ with st.sidebar:
 
         st.caption(f"Worker attivi: {overview.get('activeWorkerNum', 'N/A')} / "
                    f"{overview.get('totalWorkerNum', 'N/A')}")
+        
+                # --- Grafico storico hashrate account (Antpool) ---
+        if st.checkbox("📈 Mostra storico hashrate Antpool", value=False, key="chk_antpool_hist"):
+            days = st.slider("Intervallo (ultimi N giorni)", min_value=1, max_value=30, value=7, key="antpool_days")
+            start_dt = datetime.utcnow() - timedelta(days=days)
+
+            df_hash = fetch_antpool_hashrate_chart(chart_type=2, start_date=start_dt)
+            if df_hash is not None and not df_hash.empty:
+                fig_h = go.Figure()
+                fig_h.add_trace(go.Scatter(
+                    x=df_hash["timestamp"],
+                    y=df_hash["ths"] / 1000.0,   # PH/s
+                    mode="lines",
+                    name="Hashrate (PH/s)"
+                ))
+                fig_h.update_layout(
+                    title=f"Hashrate Antpool ultimi {days} giorni",
+                    xaxis_title="Tempo (UTC)",
+                    yaxis_title="Hashrate (PH/s)",
+                    height=300,
+                    margin=dict(l=40, r=20, t=40, b=40),
+                )
+                st.plotly_chart(fig_h, use_container_width=True, key="antpool_hist")
+            else:
+                st.caption("Nessun dato storico disponibile (o errore API `userHashrateChart`).")
+
 
 
     col1, col2 = st.columns(2)
