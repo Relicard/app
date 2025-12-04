@@ -3,6 +3,8 @@ import re
 import requests
 import smtplib
 from email.message import EmailMessage
+from datetime import datetime
+import pytz
 
 # ----------------------------------------------------------
 # CONFIGURAZIONE GENERALE
@@ -143,8 +145,12 @@ def main():
     while True:
         try:
             price = get_lz_west_price()
+            # --- Data e ora in Texas (Midland) ---
+            tz_tx = pytz.timezone("America/Chicago")
+            now_tx = datetime.now(tz_tx).strftime("%Y-%m-%d %H:%M:%S")
+
             print("\n----------------------------------------")
-            print(f"[CHECK] Nuova lettura ERCOT LZ_WEST → {price:.2f} $/MWh")
+            print(f"[CHECK] {now_tx} (Midland TX) → Prezzo ERCOT LZ_WEST: {price:.2f} $/MWh")
             print("----------------------------------------")
 
             # Logica a isteresi:
