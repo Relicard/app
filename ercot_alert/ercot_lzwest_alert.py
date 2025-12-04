@@ -12,8 +12,8 @@ from email.message import EmailMessage
 ERCOT_URL = "https://www.ercot.com/content/cdr/html/hb_lz.html"
 
 # Soglie in $/MWh
-HIGH_THRESHOLD = 1  # manda mail quando LZ_WEST sale sopra questa soglia
-LOW_THRESHOLD = 9999    # manda mail quando LZ_WEST scende sotto questa soglia
+HIGH_THRESHOLD = 100  # manda mail quando LZ_WEST sale sopra questa soglia
+LOW_THRESHOLD = 80    # manda mail quando LZ_WEST scende sotto questa soglia
 
 # Ogni quanto controllare (in secondi)
 CHECK_INTERVAL_SECONDS = 300  # 5 minuti
