@@ -39,21 +39,36 @@ def get_lz_west_price():
     """
     Scarica la pagina ERCOT e ritorna il prezzo LZ_WEST come float (in $/MWh).
 
-    Il formato della pagina è testuale, ad es.:
-    LZ_WEST 47.70 1.67 47.70 1.67
-
-    Noi prendiamo il primo numero dopo 'LZ_WEST'.
+    Strategia:
+    - scarico l'HTML
+    - rimuovo i tag
+    - cerco la stringa LZ_WEST e il primo numero dopo
     """
     resp = requests.get(ERCOT_URL, timeout=10)
     resp.raise_for_status()
-    text = resp.text
+    html = resp.text
 
-    # Regex: cerca "LZ_WEST" seguito dal primo numero (può essere anche negativo, con decimali)
-    match = re.search(r"LZ_WEST\s+(-?\d+\.\d+)", text)
+    # 1) togliamo tutti i TAG HTML per lavorare solo su testo
+    #    <qualcosa> -> rimosso
+    text = re.sub(r"<[^>]+>", " ", html)
+
+    # 2) comprimiamo spazi multipli
+    text = re.sub(r"\s+", " ", text)
+
+    # 3) cerchiamo "LZ_WEST" seguito da un numero (anche con segno e decimali)
+    #    es: "LZ_WEST 47.70" oppure "LZ_WEST -12.34"
+    match = re.search(r"LZ[_ ]WEST\s+(-?\d+\.\d+)", text)
+
     if not match:
-        raise ValueError("Non trovo LZ_WEST nella pagina ERCOT")
+        # DEBUG opzionale: stampa un pezzo di testo per capire
+        snippet = text[:1000]
+        print("DEBUG: primi 1000 caratteri del testo pulito:")
+        print(snippet)
+        raise ValueError("Non trovo LZ_WEST nella pagina ERCOT (dopo pulizia HTML)")
+
     price = float(match.group(1))
     return price
+
 
 
 def send_email(subject: str, body: str):
