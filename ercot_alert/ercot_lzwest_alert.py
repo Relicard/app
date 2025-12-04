@@ -26,10 +26,13 @@ CHECK_INTERVAL_SECONDS = 300  # 5 minuti
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 465  # SSL
 
-SMTP_USER = "michael.alessi.desmo@gmail.com"       # <- MODIFICA QUI
-SMTP_PASSWORD = "edod xbcl xwcv vkfp"        # <- MODIFICA QUI (app password)
-EMAIL_FROM = "michael.alessi.desmo@gmail.com"     # <- di solito uguale a SMTP_USER
-EMAIL_TO = "michael.alessi.desmo@gmail.com"  # <- MODIFICA QUI
+import os
+
+SMTP_USER = os.environ.get("SMTP_USER")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
+EMAIL_FROM = os.environ.get("EMAIL_FROM")
+EMAIL_TO = os.environ.get("EMAIL_TO")
+  
 
 # ----------------------------------------------------------
 # FUNZIONI
