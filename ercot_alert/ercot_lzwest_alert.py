@@ -143,7 +143,9 @@ def main():
     while True:
         try:
             price = get_lz_west_price()
-            print(f"[INFO] Prezzo LZ_WEST: {price:.2f} $/MWh")
+            print("\n----------------------------------------")
+            print(f"[CHECK] Nuova lettura ERCOT LZ_WEST → {price:.2f} $/MWh")
+            print("----------------------------------------")
 
             # Logica a isteresi:
             # - se prezzo >= HIGH_THRESHOLD e non eravamo già "HIGH" -> manda mail high, imposta stato HIGH
