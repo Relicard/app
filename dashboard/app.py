@@ -114,6 +114,32 @@ def parse_btc_price_csv(file) -> pd.DataFrame:
 
     return df
 
+def get_btc_price_from_api() -> float | None:
+    """
+    Recupera il prezzo BTC/USD da CoinGecko.
+    In caso di errore, stampa info in console e restituisce None.
+    """
+    url = "https://api.coingecko.com/api/v3/simple/price"
+    params = {"ids": "bitcoin", "vs_currencies": "usd"}
+
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        print("BTC API status:", r.status_code)
+        if r.status_code != 200:
+            print("BTC API response:", r.text)
+            return None
+
+        data = r.json()
+        price = data.get("bitcoin", {}).get("usd")
+        if price is None:
+            print("BTC API: campo 'bitcoin.usd' mancante:", data)
+            return None
+
+        return float(price)
+    except Exception as e:
+        print("Errore chiamata BTC API:", e)
+        return None
+
 
 
 def filter_by_date(df: pd.DataFrame, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
@@ -121,12 +147,13 @@ def filter_by_date(df: pd.DataFrame, start_date: datetime.date, end_date: dateti
     return df[mask]
 
 
+
 # -----------------------------
 # SIDEBAR: CARICAMENTO & FILTRI
 # -----------------------------
 st.sidebar.title("⚙️ Configurazione")
 
-st.sidebar.subheader("1. Carica i CSV")
+st.sidebar.subheader("1. Carica i CSV principali")
 
 synota_file = st.sidebar.file_uploader("Synota CSV (energia/costi)", type=["csv"], key="synota")
 antpool_file = st.sidebar.file_uploader("Antpool CSV (hashrate/ricavi)", type=["csv"], key="antpool")
@@ -140,46 +167,38 @@ if synota_file is not None:
 if antpool_file is not None:
     antpool_df = parse_antpool_csv(antpool_file)
 
-# Range date globale (se possibile, usa l'intersezione)
-if synota_df is not None or antpool_df is not None:
-    all_dates = []
-    if synota_df is not None:
-        all_dates.extend(list(synota_df["date"]))
-    if antpool_df is not None:
-        all_dates.extend(list(antpool_df["date"]))
+# -----------------------------
+# Prezzo BTC (attuale / manuale) + CSV storico
+# -----------------------------
+st.sidebar.subheader("2. Prezzo Bitcoin")
 
-    min_date = min(all_dates).date()
-    max_date = max(all_dates).date()
+btc_price_mode = st.sidebar.radio(
+    "Seleziona modalità",
+    options=["Input manuale", "Prezzo di mercato attuale"],
+)
 
-    st.sidebar.subheader("2. Filtro timeframe")
-    date_range = st.sidebar.date_input(
-        "Seleziona intervallo di date",
-        (min_date, max_date),
-        min_value=min_date,
-        max_value=max_date,
-    )
-    if isinstance(date_range, tuple):
-        start_date, end_date = date_range
+btc_price_market = None
+
+if btc_price_mode == "Prezzo di mercato attuale":
+    btc_price_market = get_btc_price_from_api()
+    if btc_price_market is None:
+        st.sidebar.error("❌ Non riesco a recuperare il prezzo BTC da API.\nUsa l'input manuale qui sotto.")
     else:
-        start_date = date_range
-        end_date = date_range
-else:
-    start_date = end_date = None
+        st.sidebar.success(f"✅ Prezzo BTC attuale: {btc_price_market:,.2f} USD")
 
-# Prezzo BTC e CSV prezzo BTC
-st.sidebar.subheader("3. Bitcoin price (default)")
-
-# Prezzo di default usato quando:
-# - non c'è il CSV
-# - oppure per giorni che non hanno un prezzo nel CSV
-btc_price_used = st.sidebar.number_input(
-    "Default BTC price [USD]",
+# Input manuale sempre disponibile (override)
+manual_btc_price = st.sidebar.number_input(
+    "Prezzo BTC/USD (manuale, override)",
     min_value=0.0,
-    value=60000.0,
+    value=float(btc_price_market) if btc_price_market is not None else 60000.0,
     step=100.0,
 )
 
-st.sidebar.subheader("4. CSV prezzo BTC (opzionale)")
+# Valore effettivo usato nel resto dell'app
+btc_price_used = manual_btc_price if manual_btc_price > 0 else btc_price_market
+
+
+st.sidebar.subheader("3. CSV prezzo BTC (opzionale)")
 
 btc_price_df = None
 btc_price_file = st.sidebar.file_uploader(
@@ -198,6 +217,68 @@ if btc_price_file is not None:
         st.sidebar.error("CSV prezzo BTC non valido. Controlla che abbia le colonne 'Date' e 'Close'.")
 
 
+# -----------------------------
+# Hosting: CSV clienti + prezzo vendita
+# -----------------------------
+st.sidebar.subheader("4. Hosting clients")
+
+hosting_price_per_kwh = st.sidebar.number_input(
+    "Prezzo vendita elettricità hosting [USD/kWh]",
+    min_value=0.0,
+    value=0.07,
+    step=0.005,
+    format="%.4f",
+)
+
+hosting_files = st.sidebar.file_uploader(
+    "CSV Antpool clienti in hosting (uno o più)",
+    type=["csv"],
+    accept_multiple_files=True,
+    key="hosting_csvs",
+)
+
+hosting_df_all = None
+if hosting_files:
+    frames = []
+    for f in hosting_files:
+        df_h = parse_antpool_csv(f)
+        # Nome cliente = nome file senza estensione
+        client_name = f.name.rsplit(".", 1)[0]
+        df_h["client"] = client_name
+        frames.append(df_h)
+
+    if frames:
+        hosting_df_all = pd.concat(frames, ignore_index=True)
+        hosting_df_all = hosting_df_all.sort_values("date")
+
+
+# -----------------------------
+# Range date globale (Synota / Antpool)
+# -----------------------------
+if synota_df is not None or antpool_df is not None:
+    all_dates = []
+    if synota_df is not None:
+        all_dates.extend(list(synota_df["date"]))
+    if antpool_df is not None:
+        all_dates.extend(list(antpool_df["date"]))
+
+    min_date = min(all_dates).date()
+    max_date = max(all_dates).date()
+
+    st.sidebar.subheader("5. Filtro timeframe")
+    date_range = st.sidebar.date_input(
+        "Seleziona intervallo di date",
+        (min_date, max_date),
+        min_value=min_date,
+        max_value=max_date,
+    )
+    if isinstance(date_range, tuple):
+        start_date, end_date = date_range
+    else:
+        start_date = date_range
+        end_date = date_range
+else:
+    start_date = end_date = None
 
 # -----------------------------
 # HEADER
@@ -208,15 +289,16 @@ st.markdown(
 Dashboard interattiva per analizzare:
 - **Energia & costi** (Synota)  
 - **Hashrate & ricavi** (Antpool)  
+- **Hosting clienti** (ricavi elettricità)  
 - **Metriche combinate** (costo vs ricavo, $/MWh, $/BTC, ecc.)
 """
 )
 
 
 # -----------------------------
-# SE NESSUN CSV
+# SE NESSUN CSV PRINCIPALE
 # -----------------------------
-if synota_df is None and antpool_df is None:
+if synota_df is None and antpool_df is None and hosting_df_all is None:
     st.info("👈 Carica almeno un CSV nella sidebar per iniziare.")
     st.stop()
 
@@ -234,16 +316,28 @@ if start_date and end_date:
         antpool_filtered = filter_by_date(antpool_df, start_date, end_date)
     else:
         antpool_filtered = None
+
+    if hosting_df_all is not None:
+        hosting_filtered = filter_by_date(hosting_df_all, start_date, end_date)
+    else:
+        hosting_filtered = None
 else:
     synota_filtered = synota_df
     antpool_filtered = antpool_df
+    hosting_filtered = hosting_df_all
 
 
 # -----------------------------
 # TABS PRINCIPALI
 # -----------------------------
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["⚡ Energia (Synota)", "⛏️ Mining (Antpool)", "🔗 Combined View", "📈 Metriche globali"]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    [
+        "⚡ Energia (Synota)",
+        "⛏️ Mining (Antpool)",
+        "🔗 Combined View",
+        "📈 Metriche globali",
+        "🤝 Hosting",
+    ]
 )
 
 
@@ -318,15 +412,14 @@ with tab1:
 
         st.plotly_chart(fig, use_container_width=True)
 
-
-                # -----------------------------
+        # -----------------------------
         # GRAFICO 2: CONFRONTO RELATIVO (SERIE INDICIZZATE)
         # -----------------------------
         st.markdown("### 🔍 Confronto relativo energia vs costi (serie indicizzate)")
 
         synota_rel = synota_filtered.copy()
 
-        # Base = media (potresti anche usare il primo valore, se preferisci)
+        # Base = media
         base_energy = synota_rel["energy_mwh"].mean()
         base_cost = synota_rel["invoice_amount_usd"].mean()
 
@@ -361,7 +454,6 @@ with tab1:
         else:
             st.info("Impossibile calcolare le serie indicizzate (media energia o costi = 0).")
 
-
         st.markdown("### 📄 Dati Synota (filtrati)")
         st.dataframe(
             synota_filtered[
@@ -382,6 +474,7 @@ with tab1:
             use_container_width=True,
         )
 
+
 # -----------------------------
 # TAB 2 – MINING / ANTPOOL
 # -----------------------------
@@ -395,29 +488,30 @@ with tab2:
         antpool_with_price = antpool_filtered.copy()
 
         # -----------------------------
-        # 1) Applica prezzo BTC per ogni giorno
+        # Applica prezzo BTC per ogni giorno
         # -----------------------------
-        # Caso A: hai caricato il CSV del prezzo BTC → usa quello (logica "storica reale")
         if btc_price_df is not None and not btc_price_df.empty:
+            # merge con prezzi storici per data
             antpool_with_price = antpool_with_price.merge(
-                btc_price_df,  # contiene colonne: date, btc_price_usd
+                btc_price_df,  # colonne: date, btc_price_usd
                 on="date",
                 how="left",
             )
+            # fallback: se un giorno non ha prezzo nel CSV, usa il prezzo attuale / manuale
+            fallback_price = btc_price_used if btc_price_used else 0.0
+            antpool_with_price["btc_price_usd"] = antpool_with_price["btc_price_usd"].fillna(fallback_price)
         else:
-            # Caso B: nessun CSV caricato → logica semplice di prima (prezzo unico)
-            if btc_price_used and btc_price_used > 0:
-                antpool_with_price["btc_price_usd"] = btc_price_used
-            else:
-                antpool_with_price["btc_price_usd"] = None
+            # Nessun CSV caricato → un solo prezzo per tutto il periodo (attuale o manuale)
+            fallback_price = btc_price_used if btc_price_used else 0.0
+            antpool_with_price["btc_price_usd"] = fallback_price
 
-        # Ricavi in USD per giorno (se abbiamo il prezzo)
+        # Ricavi in USD per giorno
         antpool_with_price["earnings_usd"] = (
             antpool_with_price["total_earnings_btc"] * antpool_with_price["btc_price_usd"]
         )
 
         # -----------------------------
-        # 2) Metriche aggregate
+        # Metriche aggregate
         # -----------------------------
         total_btc = antpool_with_price["total_earnings_btc"].sum()
         avg_hashrate = antpool_with_price["daily_hashrate_ths"].mean()
@@ -517,6 +611,8 @@ with tab2:
             use_container_width=True,
         )
 
+
+
 # -----------------------------
 # TAB 3 – COMBINED VIEW
 # -----------------------------
@@ -537,19 +633,22 @@ with tab3:
         if combined.empty:
             st.warning("Nessun giorno in cui Synota e Antpool hanno entrambi dati (dopo il filtro date).")
         else:
-            if btc_price_used and btc_price_used > 0:
-                combined["earnings_usd"] = combined["total_earnings_btc"] * btc_price_used
+            # Applica prezzo BTC per giorno (CSV + fallback)
+            if btc_price_df is not None and not btc_price_df.empty:
+                combined = combined.merge(btc_price_df, on="date", how="left")
+                fallback_price = btc_price_used if btc_price_used else 0.0
+                combined["btc_price_usd"] = combined["btc_price_usd"].fillna(fallback_price)
             else:
-                combined["earnings_usd"] = None
+                fallback_price = btc_price_used if btc_price_used else 0.0
+                combined["btc_price_usd"] = fallback_price
+
+            combined["earnings_usd"] = combined["total_earnings_btc"] * combined["btc_price_usd"]
 
             # Metriche base
             total_mwh_c = combined["energy_mwh"].sum()
             total_cost_c = combined["invoice_amount_usd"].sum()
             total_btc_c = combined["total_earnings_btc"].sum()
-            if btc_price_used and btc_price_used > 0:
-                total_rev_usd_c = combined["earnings_usd"].sum()
-            else:
-                total_rev_usd_c = None
+            total_rev_usd_c = combined["earnings_usd"].sum()
 
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -559,10 +658,7 @@ with tab3:
             with col3:
                 st.metric("BTC totali minati", f"{total_btc_c:.6f}")
             with col4:
-                if total_rev_usd_c is not None:
-                    st.metric("Ricavi totali [USD]", f"{total_rev_usd_c:,.2f}")
-                else:
-                    st.metric("Ricavi totali [USD]", "N/A")
+                st.metric("Ricavi totali [USD]", f"{total_rev_usd_c:,.2f}")
 
             # Metriche avanzate
             st.markdown("### 📌 Metriche chiave")
@@ -581,13 +677,9 @@ with tab3:
                 st.write(f"{cost_per_btc:,.2f}" if cost_per_btc else "N/A")
 
             with colC:
-                if total_rev_usd_c is not None:
-                    profit_usd = total_rev_usd_c - total_cost_c
-                    st.write("**Margine lordo totale [USD]**")
-                    st.write(f"{profit_usd:,.2f}")
-                else:
-                    st.write("**Margine lordo totale [USD]**")
-                    st.write("N/A (manca prezzo BTC)")
+                profit_usd = total_rev_usd_c - total_cost_c
+                st.write("**Margine lordo totale [USD]**")
+                st.write(f"{profit_usd:,.2f}")
 
             st.markdown("### 📉 Grafico combinato (Costi vs Ricavi)")
 
@@ -605,7 +697,7 @@ with tab3:
                     y=combined["invoice_amount_usd"],
                     name="Costo energia [USD]",
                 )
-            if show_rev and combined["earnings_usd"].notna().any():
+            if show_rev:
                 fig3.add_bar(
                     x=combined["date"],
                     y=combined["earnings_usd"],
@@ -653,6 +745,7 @@ with tab3:
                 "effective_rate_usd_per_mwh",
                 "daily_hashrate_ths",
                 "total_earnings_btc",
+                "btc_price_usd",
                 "earnings_usd",
             ]
             st.dataframe(
@@ -664,11 +757,13 @@ with tab3:
                         "effective_rate_usd_per_mwh": "Rate [USD/MWh]",
                         "daily_hashrate_ths": "Hashrate [TH/s]",
                         "total_earnings_btc": "Earnings [BTC]",
+                        "btc_price_usd": "BTC price [USD]",
                         "earnings_usd": "Earnings [USD]",
                     }
                 ),
                 use_container_width=True,
             )
+
 
 
 # -----------------------------
@@ -677,7 +772,7 @@ with tab3:
 with tab4:
     st.header("📈 Metriche globali riassuntive")
 
-    # Un semplice riepilogo su tutto l'intervallo (per CSV disponibili)
+    # Energia (Synota)
     if synota_filtered is not None and not synota_filtered.empty:
         st.subheader("⚡ Energia (Synota)")
         total_mwh = synota_filtered["energy_mwh"].sum()
@@ -693,6 +788,7 @@ with tab4:
             else "- Costo medio: N/A"
         )
 
+    # Mining (Antpool)
     if antpool_filtered is not None and not antpool_filtered.empty:
         st.subheader("⛏️ Mining (Antpool)")
         total_btc = antpool_filtered["total_earnings_btc"].sum()
@@ -702,12 +798,20 @@ with tab4:
         st.write(f"- BTC totali minati: **{total_btc:.6f} BTC**")
         st.write(f"- Hashrate medio: **{avg_hashrate:,.2f} TH/s**")
 
-        if btc_price_used and btc_price_used > 0:
-            total_rev_usd = total_btc * btc_price_used
-            st.write(f"- Ricavi totali stimati: **{total_rev_usd:,.2f} USD** (BTC @ {btc_price_used:,.0f} USD)")
+        # Ricavi totali stimati con CSV + fallback
+        if btc_price_df is not None and not btc_price_df.empty:
+            tmp = antpool_filtered.merge(btc_price_df, on="date", how="left")
+            fallback_price = btc_price_used if btc_price_used else 0.0
+            tmp["btc_price_usd"] = tmp["btc_price_usd"].fillna(fallback_price)
+            total_rev_usd = (tmp["total_earnings_btc"] * tmp["btc_price_usd"]).sum()
         else:
-            st.write("- Ricavi totali in USD: N/A (manca prezzo BTC)")
+            fallback_price = btc_price_used if btc_price_used else 0.0
+            total_rev_usd = total_btc * fallback_price
 
+        st.write(f"- Ricavi totali stimati: **{total_rev_usd:,.2f} USD**")
+
+
+    # Rapporto energia vs mining
     if (synota_filtered is not None and not synota_filtered.empty) and (
         antpool_filtered is not None and not antpool_filtered.empty
     ):
@@ -731,9 +835,144 @@ with tab4:
             else:
                 st.write("- Costo energia per 1 BTC: N/A")
 
-            if btc_price_used and btc_price_used > 0:
-                total_rev_usd = total_btc * btc_price_used
-                profit = total_rev_usd - total_cost
-                st.write(f"- Margine lordo totale (ricavi - costi): **{profit:,.2f} USD**")
+            if btc_price_df is not None and not btc_price_df.empty:
+                combined = combined.merge(btc_price_df, on="date", how="left")
+                combined["btc_price_usd"] = combined["btc_price_usd"].fillna(btc_price_used if btc_price_used > 0 else 0.0)
             else:
-                st.write("- Margine lordo totale: N/A (manca prezzo BTC)")
+                combined["btc_price_usd"] = btc_price_used if btc_price_used > 0 else 0.0
+
+            total_rev_usd = (combined["total_earnings_btc"] * combined["btc_price_usd"]).sum()
+            profit = total_rev_usd - total_cost
+            st.write(f"- Margine lordo totale (ricavi - costi): **{profit:,.2f} USD**")
+
+
+# -----------------------------
+# TAB 5 – HOSTING CLIENTI
+# -----------------------------
+with tab5:
+    st.header("🤝 Hosting clienti – potenza e ricavi elettricità")
+
+    if hosting_filtered is None or hosting_filtered.empty:
+        st.info("Nessun CSV hosting caricato nella sidebar.")
+    else:
+        # Costanti modello hosting
+        ASIC_TH = 200.0      # TH/s per S21
+        ASIC_KW = 3.5        # kW per S21
+        HOURS_PER_DAY = 24.0
+
+        df_host = hosting_filtered.copy()
+
+        # Calcoli base per giorno/cliente
+        df_host["asic_equivalent"] = df_host["daily_hashrate_ths"] / ASIC_TH
+        df_host["energy_kwh"] = df_host["asic_equivalent"] * ASIC_KW * HOURS_PER_DAY
+        df_host["hosting_revenue_usd"] = df_host["energy_kwh"] * hosting_price_per_kwh
+
+        # Metriche DESMO globali hosting
+        total_clients = df_host["client"].nunique()
+        total_asic_eq = df_host["asic_equivalent"].mean()
+        total_energy_mwh = df_host["energy_kwh"].sum() / 1000.0
+        total_hosting_rev = df_host["hosting_revenue_usd"].sum()
+        total_btc_host = df_host["total_earnings_btc"].sum()
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Clienti in hosting", str(total_clients))
+        with col2:
+            st.metric("ASIC S21 equivalenti medi", f"{total_asic_eq:,.2f}")
+        with col3:
+            st.metric("Energia fatturata [MWh]", f"{total_energy_mwh:,.2f}")
+        with col4:
+            st.metric("Ricavi hosting totali [USD]", f"{total_hosting_rev:,.2f}")
+
+        st.markdown("### 👤 Seleziona cliente per dettaglio")
+
+        client_options = ["Tutti"] + sorted(df_host["client"].unique().tolist())
+        selected_client = st.selectbox("Cliente", client_options)
+
+        if selected_client != "Tutti":
+            df_view = df_host[df_host["client"] == selected_client].copy()
+        else:
+            # aggregato per data
+            df_view = df_host.groupby("date", as_index=False).agg(
+                {
+                    "daily_hashrate_ths": "sum",
+                    "total_earnings_btc": "sum",
+                    "asic_equivalent": "sum",
+                    "energy_kwh": "sum",
+                    "hosting_revenue_usd": "sum",
+                }
+            )
+
+        st.markdown("### 📉 Hosting: BTC minati vs ricavi elettricità")
+
+        show_host_rev = st.checkbox("Mostra ricavi hosting [USD]", value=True, key="host_rev")
+        show_host_btc = st.checkbox("Mostra BTC minati", value=True, key="host_btc")
+
+        fig_host = go.Figure()
+
+        if show_host_rev:
+            fig_host.add_bar(
+                x=df_view["date"],
+                y=df_view["hosting_revenue_usd"],
+                name="Ricavi hosting [USD]",
+            )
+
+        if show_host_btc:
+            fig_host.add_scatter(
+                x=df_view["date"],
+                y=df_view["total_earnings_btc"],
+                name="BTC minati",
+                mode="lines+markers",
+                yaxis="y2",
+            )
+
+        fig_host.update_layout(
+            xaxis_title="Data",
+            yaxis=dict(title="Ricavi hosting [USD]"),
+            yaxis2=dict(
+                title="BTC minati",
+                overlaying="y",
+                side="right",
+            ),
+            hovermode="x unified",
+        )
+
+        st.plotly_chart(fig_host, use_container_width=True)
+
+        st.markdown("### 📊 Riepilogo per cliente")
+
+        # Tabella per cliente (aggregata)
+        summary_clients = df_host.groupby("client", as_index=False).agg(
+            {
+                "daily_hashrate_ths": "mean",
+                "asic_equivalent": "mean",
+                "energy_kwh": "sum",
+                "hosting_revenue_usd": "sum",
+                "total_earnings_btc": "sum",
+            }
+        )
+
+        summary_clients["energy_mwh"] = summary_clients["energy_kwh"] / 1000.0
+
+        st.dataframe(
+            summary_clients[
+                [
+                    "client",
+                    "daily_hashrate_ths",
+                    "asic_equivalent",
+                    "energy_mwh",
+                    "hosting_revenue_usd",
+                    "total_earnings_btc",
+                ]
+            ].rename(
+                columns={
+                    "client": "Client",
+                    "daily_hashrate_ths": "Avg Hashrate [TH/s]",
+                    "asic_equivalent": "Avg ASIC S21 eq.",
+                    "energy_mwh": "Energy billed [MWh]",
+                    "hosting_revenue_usd": "Hosting revenue [USD]",
+                    "total_earnings_btc": "BTC mined (period)",
+                }
+            ),
+            use_container_width=True,
+        )
