@@ -921,21 +921,40 @@ with tab7:
 
             fig3 = go.Figure()
 
-            # Asse sinistro: costi/ricavi
+            # 🔹 Barre: ricavi (mining + hosting) vs costo energia
+            if show_rev:
+                # Ricavi mining – parte bassa della colonna "Ricavi"
+                fig3.add_bar(
+                    x=combined["date"],
+                    y=combined["earnings_usd"],
+                    name="Ricavi mining [USD]",
+                    offsetgroup="ricavi",       # gruppo "ricavi" (colonna di sinistra)
+                    legendgroup="ricavi",
+                    marker_color="green",
+                )
+
+                # Ricavi hosting – parte alta della stessa colonna "Ricavi"
+                fig3.add_bar(
+                    x=combined["date"],
+                    y=combined["hosting_revenue_usd"],
+                    name="Ricavi hosting [USD]",
+                    offsetgroup="ricavi",       # stesso gruppo → si stacka sulla colonna "ricavi"
+                    legendgroup="ricavi",
+                    marker_color="blue",
+                )
+
             if show_cost:
+                # Costo energia – colonna a sé affiancata ai ricavi
                 fig3.add_bar(
                     x=combined["date"],
                     y=combined["invoice_amount_usd"],
                     name="Costo energia [USD]",
-                )
-            if show_rev:
-                fig3.add_bar(
-                    x=combined["date"],
-                    y=combined["earnings_usd"],
-                    name="Ricavi [USD]",
+                    offsetgroup="costo",        # gruppo "costo" → seconda colonna
+                    legendgroup="costo",
+                    marker_color="red",
                 )
 
-            # Asse destro: rate & BTC/day
+            # 🔹 Linea: tariffa e BTC/day sull’asse destro
             if show_rate_mwh:
                 fig3.add_scatter(
                     x=combined["date"],
@@ -943,6 +962,7 @@ with tab7:
                     name="Tariffa [USD/MWh]",
                     mode="lines+markers",
                     yaxis="y2",
+                    marker_color="white",
                 )
 
             if show_btc_day:
@@ -955,7 +975,9 @@ with tab7:
                 )
 
             fig3.update_layout(
-                barmode="group",
+                # relative/stack: mining + hosting si stackano,
+                # ma il gruppo "ricavi" rimane affiancato al gruppo "costo"
+                barmode="relative",
                 xaxis_title="Data",
                 yaxis=dict(title="USD (Costi / Ricavi)"),
                 yaxis2=dict(
@@ -967,6 +989,7 @@ with tab7:
             )
 
             st.plotly_chart(fig3, use_container_width=True)
+
 
             st.markdown("### 📄 Dati combinati (per giorno)")
             show_cols = [
