@@ -119,6 +119,50 @@ def parse_btc_price_csv(file) -> pd.DataFrame:
 
     return df
 
+
+def parse_ercot_price_csv(file) -> pd.DataFrame:
+    """
+    Parsa il CSV dei prezzi ERCOT per LZ_WEST.
+    Si aspetta almeno colonne:
+    - interval_start_local  (timestamp locale, es. 2025-11-10T00:00:00-06:00)
+    - lmp                   (prezzo in USD/MWh)
+    - location              (filtriamo LZ_WEST)
+    """
+    df = pd.read_csv(file)
+
+    # Filtra LZ_WEST se la colonna esiste
+    if "location" in df.columns:
+        df = df[df["location"] == "LZ_WEST"].copy()
+
+    # Scegliamo la colonna timestamp principale
+    if "interval_start_local" in df.columns:
+        df["date"] = pd.to_datetime(df["interval_start_local"], errors="coerce")
+    elif "interval_start_utc" in df.columns:
+        df["date"] = pd.to_datetime(df["interval_start_utc"], errors="coerce")
+    else:
+        return pd.DataFrame()  # niente timestamp → niente grafico
+
+    # ⛔ QUI era il problema: date con timezone
+    # ➜ le rendiamo tutte "naive" (senza tz) così sono compatibili con Synota/Antpool
+    from pandas.api.types import is_datetime64tz_dtype
+
+    if is_datetime64tz_dtype(df["date"]):
+        df["date"] = df["date"].dt.tz_convert(None)
+
+    # Prezzo LMP → colonna numerica
+    if "lmp" in df.columns:
+        df["lmp_usd_mwh"] = pd.to_numeric(df["lmp"], errors="coerce")
+    else:
+        return pd.DataFrame()
+
+    # Pulisci righe non valide e ordina
+    df = df.dropna(subset=["date", "lmp_usd_mwh"])
+    df = df.sort_values("date")
+
+    return df
+
+
+
 def get_btc_price_from_api() -> float | None:
     """
     Recupera il prezzo BTC/USD da CoinGecko.
@@ -275,6 +319,7 @@ antpool_file = st.sidebar.file_uploader("Antpool CSV (hashrate/ricavi)", type=["
 
 synota_df = None
 antpool_df = None
+ercot_df = None
 
 if synota_file is not None:
     synota_df = parse_synota_csv(synota_file)
@@ -283,7 +328,6 @@ if antpool_file is not None:
     antpool_df = parse_antpool_csv(antpool_file)
 
 
-# 2. Vendite BTC (Kraken) – così possiamo usare il prezzo medio di vendita
 st.sidebar.subheader("2. Vendite BTC (Kraken)")
 
 kraken_file = st.sidebar.file_uploader(
@@ -296,8 +340,20 @@ kraken_trades_df = None
 if kraken_file is not None:
     kraken_trades_df = parse_kraken_trades_csv(kraken_file)
 
+# 3. Prezzi ERCOT LZ_WEST (storico 5 minuti)
+st.sidebar.subheader("3. Prezzi ERCOT (LZ_WEST)")
 
-st.sidebar.subheader("3. Prezzo Bitcoin")
+ercot_file = st.sidebar.file_uploader(
+    "CSV prezzi ERCOT LZ_WEST (5 min)",
+    type=["csv"],
+    key="ercot_prices",
+)
+
+if ercot_file is not None:
+    ercot_df = parse_ercot_price_csv(ercot_file)
+
+st.sidebar.subheader("4. Prezzo Bitcoin")
+
 
 btc_price_mode = st.sidebar.radio(
     "Seleziona modalità",
@@ -356,7 +412,7 @@ else:
 
 
 # 4. CSV prezzo BTC (opzionale)
-st.sidebar.subheader("4. CSV prezzo BTC (opzionale)")
+st.sidebar.subheader("5. CSV prezzo BTC (opzionale)")
 
 btc_price_df = None
 btc_price_file = st.sidebar.file_uploader(
@@ -376,7 +432,7 @@ if btc_price_file is not None:
 
 
 # 5. Hosting: CSV clienti + prezzo vendita
-st.sidebar.subheader("5. Hosting clients")
+st.sidebar.subheader("6. Hosting clients")
 
 hosting_price_per_kwh = st.sidebar.number_input(
     "Prezzo vendita elettricità hosting [USD/kWh]",
@@ -408,18 +464,20 @@ if hosting_files:
         hosting_df_all = hosting_df_all.sort_values("date")
 
 
-# 6. Range date globale (Synota / Antpool)
-if synota_df is not None or antpool_df is not None:
+# 6. Range date globale (Synota / Antpool / ERCOT)
+if synota_df is not None or antpool_df is not None or ercot_df is not None:
     all_dates = []
     if synota_df is not None:
         all_dates.extend(list(synota_df["date"]))
     if antpool_df is not None:
         all_dates.extend(list(antpool_df["date"]))
+    if ercot_df is not None:
+        all_dates.extend(list(ercot_df["date"]))
 
     min_date = min(all_dates).date()
     max_date = max(all_dates).date()
 
-    st.sidebar.subheader("6. Filtro timeframe")
+    st.sidebar.subheader("7. Filtro timeframe")
 
     # 👇 Preset rapidi
     preset = st.sidebar.radio(
@@ -487,7 +545,7 @@ st.markdown(
 # -----------------------------
 # SE NESSUN CSV PRINCIPALE
 # -----------------------------
-if synota_df is None and antpool_df is None and hosting_df_all is None:
+if synota_df is None and antpool_df is None and hosting_df_all is None and ercot_df is None:
     st.info("👈 Carica almeno un CSV nella sidebar per iniziare.")
     st.stop()
 
@@ -518,18 +576,24 @@ if start_date and end_date:
         ]
     else:
         kraken_filtered = None
+
+    if ercot_df is not None:
+        ercot_filtered = filter_by_date(ercot_df, start_date, end_date)
+    else:
+        ercot_filtered = None
 else:
     synota_filtered = synota_df
     antpool_filtered = antpool_df
     hosting_filtered = hosting_df_all
     kraken_filtered = kraken_trades_df
+    ercot_filtered = ercot_df
 
 
 
 # -----------------------------
 # TABS PRINCIPALI
 # -----------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
     [
         "📌 Overview & Trends",
         "📊 Charts",
@@ -540,8 +604,10 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(
         "📈 Metriche globali",
         "🔗 Combined View",
         "💰 Vendite BTC",
+        "⚡ Prezzi ERCOT LZ_WEST",
     ]
 )
+
 
 # -----------------------------
 # TAB 3 – ENERGIA / SYNOTA
@@ -2913,3 +2979,132 @@ with tab2:
                 hovermode="x",
             )
             st.plotly_chart(fig_btc_flow, use_container_width=True)
+
+
+# -----------------------------
+# TAB 10 – PREZZI ERCOT LZ_WEST
+# -----------------------------
+with tab10:
+    st.header("⚡ Prezzi ERCOT LZ_WEST – storico a 5 minuti")
+
+    if ercot_filtered is None or ercot_filtered.empty:
+        st.info("Carica il CSV dei prezzi ERCOT LZ_WEST nella sidebar per vedere il grafico.")
+    else:
+        df_erc = ercot_filtered.copy().sort_values("date")
+
+        col1, col2 = st.columns(2)
+
+        # Numero di giorni coperti dai dati filtrati
+        num_days = df_erc["date"].dt.normalize().nunique()
+
+        with col1:
+            st.metric("Numero giorni coperti", f"{num_days}")
+
+        with col2:
+            st.metric(
+                "Prezzo medio [USD/MWh]",
+                f"{df_erc['lmp_usd_mwh'].mean():.2f}"
+            )
+
+        st.markdown("### Andamento LMP LZ_WEST (5 min)")
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=df_erc["date"],
+                y=df_erc["lmp_usd_mwh"],
+                mode="lines",
+                name="LMP LZ_WEST [USD/MWh]",
+            )
+        )
+
+        fig.update_layout(
+            xaxis_title="Data / ora",
+            yaxis_title="Prezzo [USD/MWh]",
+            hovermode="x unified",
+            xaxis=dict(
+                rangeselector=dict(
+                    buttons=list([
+                        dict(count=1, label="Ultime 24h", step="day", stepmode="backward"),
+                        dict(count=7, label="Ultimi 7g", step="day", stepmode="backward"),
+                        dict(step="all", label="Tutto"),
+                    ])
+                ),
+                rangeslider=dict(visible=True),
+                type="date",
+            ),
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+
+        st.markdown("---")
+        st.markdown("### 🧪 Simulatore cut-off prezzo ERCOT")
+
+        st.write(
+            "Imposta un prezzo soglia [USD/MWh]. "
+            "Sopra questa soglia le macchine vengono spente; "
+            "calcoliamo il prezzo medio quando sono accese e l'uptime risultante."
+        )
+
+        cutoff_price = st.number_input(
+            "Prezzo soglia di spegnimento [USD/MWh]",
+            min_value=0.0,
+            max_value=10000.0,
+            value=80.0,
+            step=1.0,
+        )
+
+        # Intervalli in cui le macchine sarebbero ACCESE (prezzo <= soglia)
+        df_on = df_erc[df_erc["lmp_usd_mwh"] <= cutoff_price]
+
+        total_intervals = len(df_erc)
+        on_intervals = len(df_on)
+
+        if total_intervals == 0:
+            st.warning("Non ci sono intervalli disponibili nel periodo selezionato.")
+        elif on_intervals == 0:
+            st.warning(
+                "Con questa soglia di prezzo non ci sarebbe nessun intervallo in cui le macchine restano accese."
+            )
+        else:
+            uptime_ratio = on_intervals / total_intervals
+            uptime_pct = uptime_ratio * 100.0
+
+            # Ogni intervallo è di 5 minuti → ore equivalenti
+            minutes_per_interval = 5
+            total_minutes_on = on_intervals * minutes_per_interval
+            hours_on = total_minutes_on / 60.0
+            days_on = hours_on / 24.0
+
+            avg_price_on = df_on["lmp_usd_mwh"].mean()
+
+            col_a, col_b, col_c = st.columns(3)
+
+            with col_a:
+                st.metric(
+                    "Uptime stimato [%]",
+                    f"{uptime_pct:.1f}%",
+                    help="Percentuale di tempo in cui il prezzo è ≤ soglia."
+                )
+
+            with col_b:
+                st.metric(
+                    "Prezzo medio quando ON [USD/MWh]",
+                    f"{avg_price_on:.2f}",
+                    help="Media LMP solo negli intervalli in cui le macchine restano accese."
+                )
+
+            with col_c:
+                st.metric(
+                    "Tempo ON (equivalente)",
+                    f"{hours_on:.1f} h (~{days_on:.2f} gg)",
+                    help="Ore/giorni equivalenti in cui le macchine sarebbero accese nel periodo selezionato."
+                )
+
+            # Piccolo riepilogo testuale
+            st.caption(
+                f"Nel periodo selezionato, con soglia **{cutoff_price:.2f} USD/MWh**, "
+                f"le macchine sarebbero accese in **{on_intervals}** intervalli "
+                f"su **{total_intervals}** totali."
+            )
