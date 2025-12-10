@@ -144,7 +144,7 @@ def parse_ercot_price_csv(file) -> pd.DataFrame:
 
     # ⛔ QUI era il problema: date con timezone
     # ➜ le rendiamo tutte "naive" (senza tz) così sono compatibili con Synota/Antpool
-    from pandas.api.types import is_datetime64tz_dtype
+    from pandas.api.types import is_datetime64tz_dtype #type: ignore
 
     if is_datetime64tz_dtype(df["date"]):
         df["date"] = df["date"].dt.tz_convert(None)
@@ -739,7 +739,278 @@ with tab3:
             ),
             use_container_width=True,
         )
+        
+        # -----------------------------
+        # SCOMPOSIZIONE COSTI CONTRATTO SYNOTA / ONCOR
+        # -----------------------------
+        st.markdown("### 🧮 Scomposizione costi contratto Synota / Oncor (stima)")
 
+        total_mwh = synota_filtered["energy_mwh"].sum()
+        num_days = synota_filtered["date"].dt.normalize().nunique()
+        total_cost = synota_filtered["invoice_amount_usd"].sum()
+        avg_rate = total_cost / total_mwh if total_mwh > 0 else None
+
+        if total_mwh <= 0 or num_days == 0 or total_cost <= 0:
+            st.info("Impossibile calcolare la scomposizione: energia totale, numero giorni o invoice = 0.")
+        else:
+            st.caption(
+                "Parametri contratto (puoi modificarli per simulare). "
+                "I valori sono applicati ai soli giorni/record attualmente selezionati nel filtro."
+            )
+
+            colp1, colp2, colp3 = st.columns(3)
+            with colp1:
+                billed_kw = st.number_input(
+                    "Potenza fatturata (kW, 4CP / capacità sito)",
+                    min_value=0.0,
+                    max_value=5000.0,
+                    value=1100.0,
+                    step=50.0,
+                    key="syn_cp_kw",
+                )
+            with colp2:
+                tdsp_peak_rate = st.number_input(
+                    "TDSP Peak Charge [$/kW-day]",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=0.3724,
+                    step=0.01,
+                    key="syn_tdsp_peak",
+                )
+            with colp3:
+                tdsp_flat_rate = st.number_input(
+                    "TDSP Flat Charge [$/day]",
+                    min_value=0.0,
+                    max_value=20.0,
+                    value=2.13,
+                    step=0.1,
+                    key="syn_tdsp_flat",
+                )
+
+            # --- Parametri contratto fissi per MWh ---
+            adder = 4.10                      # $/MWh
+            ercot_admin = 0.63                # $/MWh
+            ancillary = 0.03                  # $/MWh
+            securitization = 0.59             # $/MWh
+
+            # TDSP usage è espresso in $/kWh → convertiamo in $/MWh
+            tdsp_usage_per_kwh = 0.00055      # $/kWh
+            tdsp_usage_per_mwh = tdsp_usage_per_kwh * 1000.0  # = 0.55 $/MWh
+
+            # Tasse (in forma decimale)
+            tax_state = 0.0625
+            tax_local = 0.015
+            tax_gross = 0.01997
+            tax_pub = 0.001667
+            total_tax_rate = tax_state + tax_local + tax_gross + tax_pub
+
+            # Componenti "variabili" dirette per MWh
+            variable_components_per_mwh = {
+                "Adder commerciale": adder,
+                "ERCOT System Admin": ercot_admin,
+                "Ancillary Service": ancillary,
+                "Securitization": securitization,
+                "TDSP Usage": tdsp_usage_per_mwh,
+            }
+
+            # --- Componenti giornalieri: TDSP Flat + TDSP Peak (4CP stimato) ---
+            tdsp_flat_total = tdsp_flat_rate * num_days
+            tdsp_peak_total = tdsp_peak_rate * billed_kw * num_days
+
+            tdsp_flat_per_mwh = tdsp_flat_total / total_mwh
+            tdsp_peak_per_mwh = tdsp_peak_total / total_mwh
+
+            # Costruzione tabella MICRO (dettaglio componenti)
+            rows = []
+            subtotal_pre_tax_per_mwh = 0.0
+            subtotal_pre_tax_total = 0.0
+
+            for name, rate_per_mwh in variable_components_per_mwh.items():
+                total_usd = rate_per_mwh * total_mwh
+                rows.append(
+                    {
+                        "Categoria": name,
+                        "Costo totale [USD]": total_usd,
+                        "Costo medio [USD/MWh]": rate_per_mwh,
+                    }
+                )
+                subtotal_pre_tax_per_mwh += rate_per_mwh
+                subtotal_pre_tax_total += total_usd
+
+            # TDSP Flat
+            rows.append(
+                {
+                    "Categoria": "TDSP Flat",
+                    "Costo totale [USD]": tdsp_flat_total,
+                    "Costo medio [USD/MWh]": tdsp_flat_per_mwh,
+                }
+            )
+            # TDSP Peak
+            rows.append(
+                {
+                    "Categoria": "TDSP Peak (4CP)",
+                    "Costo totale [USD]": tdsp_peak_total,
+                    "Costo medio [USD/MWh]": tdsp_peak_per_mwh,
+                }
+            )
+
+            subtotal_pre_tax_per_mwh += tdsp_flat_per_mwh + tdsp_peak_per_mwh
+            subtotal_pre_tax_total += tdsp_flat_total + tdsp_peak_total
+
+            # --- Tasse applicate alle componenti sopra ---
+            taxes_total = subtotal_pre_tax_total * total_tax_rate
+            taxes_per_mwh = subtotal_pre_tax_per_mwh * total_tax_rate
+
+            rows.append(
+                {
+                    "Categoria": "Tasse totali",
+                    "Costo totale [USD]": taxes_total,
+                    "Costo medio [USD/MWh]": taxes_per_mwh,
+                }
+            )
+
+            estimated_total_per_mwh = subtotal_pre_tax_per_mwh * (1.0 + total_tax_rate)
+            estimated_total_total = subtotal_pre_tax_total * (1.0 + total_tax_rate)
+
+            rows.append(
+                {
+                    "Categoria": "Sub-Totale add-on",
+                    "Costo totale [USD]": estimated_total_total,
+                    "Costo medio [USD/MWh]": estimated_total_per_mwh,
+                }
+            )
+
+            # --- Residuo: lo interpretiamo come "Energia ERCOT (residua)" ---
+            ercot_residual_total = total_cost - estimated_total_total
+            # se per qualche motivo viene negativo, lo lasciamo comunque per vedere che stiamo sovrastimando
+            ercot_residual_per_mwh = ercot_residual_total / total_mwh
+
+            rows.append(
+                {
+                    "Categoria": "Energia LMP ERCOT LZ_WEST",
+                    "Costo totale [USD]": ercot_residual_total,
+                    "Costo medio [USD/MWh]": ercot_residual_per_mwh,
+                }
+            )
+
+            # Confronto con la fattura reale Synota del periodo
+            rows.append(
+                {
+                    "Categoria": "Invoice (Synota)",
+                    "Costo totale [USD]": total_cost,
+                    "Costo medio [USD/MWh]": avg_rate,
+                }
+            )
+
+            summary_df = pd.DataFrame(rows)
+
+            # Peso % di ogni riga sulla invoice reale
+            summary_df["Peso % su invoice"] = (
+                summary_df["Costo totale [USD]"] / total_cost * 100.0
+            )
+
+            st.markdown("#### Micro-aree di costo (dettaglio)")
+            st.dataframe(
+                summary_df.style.format(
+                    {
+                        "Costo totale [USD]": "{:,.2f}",
+                        "Costo medio [USD/MWh]": "{:,.2f}",
+                        "Peso % su invoice": "{:,.1f}%",
+                    }
+                ),
+                use_container_width=True,
+            )
+
+            # --- MACRO AREE: add-on vs ERCOT & residuo energia ---
+            st.markdown("#### Macro-aree di costo (add-on vs prezzo ERCOT)")
+
+            retail_addon_per_mwh = adder + ercot_admin + ancillary + securitization
+            retail_total = retail_addon_per_mwh * total_mwh
+
+            tdsp_addon_per_mwh = tdsp_usage_per_mwh + tdsp_flat_per_mwh + tdsp_peak_per_mwh
+            tdsp_total = tdsp_addon_per_mwh * total_mwh
+
+            tax_addon_per_mwh = taxes_per_mwh
+            tax_total = tax_addon_per_mwh * total_mwh
+
+            total_addon_per_mwh = estimated_total_per_mwh
+            total_addon_total = total_addon_per_mwh * total_mwh
+
+            invoice_per_mwh = avg_rate
+
+            macro_rows = []
+
+            macro_rows.append(
+                {
+                    "Macro area": "Componenti retail (Adder + Admin + Ancillary + Securitization)",
+                    "Costo totale [USD]": retail_total,
+                    "Costo medio [USD/MWh]": retail_addon_per_mwh,
+                }
+            )
+
+            macro_rows.append(
+                {
+                    "Macro area": "TDSP (Usage + Flat + Peak)",
+                    "Costo totale [USD]": tdsp_total,
+                    "Costo medio [USD/MWh]": tdsp_addon_per_mwh,
+                }
+            )
+
+            macro_rows.append(
+                {
+                    "Macro area": "Tasse su energia + TDSP",
+                    "Costo totale [USD]": tax_total,
+                    "Costo medio [USD/MWh]": tax_addon_per_mwh,
+                }
+            )
+
+            macro_rows.append(
+                {
+                    "Macro area": "Totale add-on (no energia ERCOT)",
+                    "Costo totale [USD]": total_addon_total,
+                    "Costo medio [USD/MWh]": total_addon_per_mwh,
+                }
+            )
+
+            macro_rows.append(
+                {
+                    "Macro area": "Energia ERCOT LZ_WEST (residua)",
+                    "Costo totale [USD]": ercot_residual_total,
+                    "Costo medio [USD/MWh]": ercot_residual_per_mwh,
+                }
+            )
+
+            macro_rows.append(
+                {
+                    "Macro area": "Totale fattura (Synota)",
+                    "Costo totale [USD]": total_cost,
+                    "Costo medio [USD/MWh]": invoice_per_mwh,
+                }
+            )
+
+            macro_df = pd.DataFrame(macro_rows)
+
+            macro_df["Peso % su invoice"] = (
+                macro_df["Costo totale [USD]"] / total_cost * 100.0
+            )
+
+            st.dataframe(
+                macro_df.style.format(
+                    {
+                        "Costo totale [USD]": "{:,.2f}",
+                        "Costo medio [USD/MWh]": "{:,.2f}",
+                        "Peso % su invoice": "{:,.1f}%",
+                    }
+                ),
+                use_container_width=True,
+            )
+
+            st.caption(
+                "La riga **Energia ERCOT LZ_WEST (residua)** è calcolata come differenza tra la "
+                "fattura reale Synota e la somma stimata di add-on retail/TDSP/tasse. "
+                "Dividendo questo residuo per i MWh consumati otteniamo un **prezzo medio implicito ERCOT [USD/MWh]** "
+                "per il periodo selezionato, utile per confrontarlo con i prezzi LZ_WEST dello storico ERCOT."
+            )
 
 # -----------------------------
 # TAB 4 – MINING / ANTPOOL
@@ -3108,3 +3379,174 @@ with tab10:
                 f"le macchine sarebbero accese in **{on_intervals}** intervalli "
                 f"su **{total_intervals}** totali."
             )
+
+        # -------------------------------------------------
+        # SIMULATORE INVERSO: TARGET "PREZZO MEDIO QUANDO ON"
+        # -------------------------------------------------
+        st.markdown("---")
+        st.markdown("### 🧪 Simulatore inverso: target prezzo medio quando ON")
+
+        st.write(
+            "Imposta un **prezzo medio obiettivo** quando le macchine sono ON. "
+            "Calcoliamo quale soglia prezzo di spegnimento (cut-off) lo approssima meglio "
+            "e che uptime ne risulta."
+        )
+
+        # Costruisco una tabella per soglie intere (1 USD/MWh) → media prezzo ON & uptime
+        total_intervals_all = len(df_erc)
+        minutes_per_interval = 5
+
+        min_price = float(df_erc["lmp_usd_mwh"].min())
+        max_price = float(df_erc["lmp_usd_mwh"].max())
+
+        # Per sicurezza, limitiamo l'intervallo a qualcosa di sensato
+        min_thr = int(min_price)
+        max_thr = int(max_price)
+
+        thresholds = list(range(min_thr, max_thr + 1))
+        stats = []
+
+        for thr in thresholds:
+            df_on_thr = df_erc[df_erc["lmp_usd_mwh"] <= thr]
+            on_int_thr = len(df_on_thr)
+
+            if on_int_thr == 0:
+                # Niente intervalli ON → saltiamo questa soglia
+                continue
+
+            avg_on_thr = df_on_thr["lmp_usd_mwh"].mean()
+            uptime_thr = on_int_thr / total_intervals_all * 100.0
+            hours_on_thr = on_int_thr * minutes_per_interval / 60.0
+
+            stats.append(
+                {
+                    "threshold": thr,
+                    "avg_price_on": avg_on_thr,
+                    "uptime_pct": uptime_thr,
+                    "hours_on": hours_on_thr,
+                }
+            )
+
+        if len(stats) == 0:
+            st.warning("Impossibile calcolare il simulatore inverso: nessun intervallo ON disponibile.")
+        else:
+            stats_df = pd.DataFrame(stats)
+
+            min_avg_possible = float(stats_df["avg_price_on"].min())
+            max_avg_possible = float(stats_df["avg_price_on"].max())
+            default_target = float(stats_df["avg_price_on"].median())
+
+            target_avg = st.number_input(
+                "Target 'Prezzo medio quando ON' [USD/MWh]",
+                min_value=round(min_avg_possible, 2),
+                max_value=round(max_avg_possible, 2),
+                value=round(default_target, 2),
+                step=1.0,
+            )
+
+            # Trova la soglia che produce una media più vicina al target
+            closest_idx = (stats_df["avg_price_on"] - target_avg).abs().argmin()
+            closest_row = stats_df.iloc[closest_idx]
+
+            best_thr = closest_row["threshold"]
+            best_avg = closest_row["avg_price_on"]
+            best_uptime = closest_row["uptime_pct"]
+            best_hours = closest_row["hours_on"]
+            best_days = best_hours / 24.0
+
+            col_inv_a, col_inv_b, col_inv_c, col_inv_d = st.columns(4)
+            with col_inv_a:
+                st.metric(
+                    "Soglia equivalente [USD/MWh]",
+                    f"{best_thr:.0f}",
+                    help="Cut-off prezzo che approssima il target medio ON."
+                )
+            with col_inv_b:
+                st.metric(
+                    "Prezzo medio risultante [USD/MWh]",
+                    f"{best_avg:.2f}",
+                    help="Prezzo medio effettivo con quella soglia."
+                )
+            with col_inv_c:
+                st.metric(
+                    "Uptime stimato [%]",
+                    f"{best_uptime:.1f}%",
+                    help="Percentuale di intervalli ON con quella soglia."
+                )
+            with col_inv_d:
+                st.metric(
+                    "Tempo ON equivalente",
+                    f"{best_hours:.1f} h (~{best_days:.2f} gg)",
+                    help="Tempo complessivo ON nel periodo selezionato."
+                )
+
+            st.caption(
+                f"Il target di **{target_avg:.2f} USD/MWh** corrisponde circa a una soglia di "
+                f"**{best_thr:.0f} USD/MWh**, con uptime ≈ **{best_uptime:.1f}%** "
+                f"nel periodo attuale."
+            )
+
+            st.markdown("### 📈 Sensibilità: effetto del cut-off sul prezzo medio e sull'uptime")
+
+            st.write(
+                "Per ogni soglia di spegnimento (step 1 USD/MWh) mostriamo come cambiano "
+                "il **prezzo medio quando ON** e l'**uptime**. "
+                "Questo fa vedere, ad esempio, che passare da 95→90 USD non ha lo stesso effetto che 50→45 USD."
+            )
+
+            fig_cut = go.Figure()
+
+            # Linea: prezzo medio quando ON
+            fig_cut.add_trace(
+                go.Scatter(
+                    x=stats_df["threshold"],
+                    y=stats_df["avg_price_on"],
+                    mode="lines+markers",
+                    name="Prezzo medio quando ON [USD/MWh]",
+                )
+            )
+
+            # Secondo asse: uptime %
+            fig_cut.add_trace(
+                go.Scatter(
+                    x=stats_df["threshold"],
+                    y=stats_df["uptime_pct"],
+                    mode="lines",
+                    name="Uptime [%]",
+                    yaxis="y2",
+                )
+            )
+
+            fig_cut.update_layout(
+                xaxis_title="Soglia prezzo di spegnimento [USD/MWh]",
+                yaxis=dict(
+                    title="Prezzo medio quando ON [USD/MWh]",
+                ),
+                yaxis2=dict(
+                    title="Uptime [%]",
+                    overlaying="y",
+                    side="right",
+                ),
+                hovermode="x unified",
+            )
+
+            st.plotly_chart(fig_cut, use_container_width=True)
+
+            with st.expander("Tabella dettagli per soglia (step 1 USD/MWh)"):
+                st.dataframe(
+                    stats_df.rename(
+                        columns={
+                            "threshold": "Soglia [USD/MWh]",
+                            "avg_price_on": "Prezzo medio ON [USD/MWh]",
+                            "uptime_pct": "Uptime [%]",
+                            "hours_on": "Ore ON equivalenti",
+                        }
+                    ).style.format(
+                        {
+                            "Prezzo medio ON [USD/MWh]": "{:,.2f}",
+                            "Uptime [%]": "{:,.1f}",
+                            "Ore ON equivalenti": "{:,.1f}",
+                        }
+                    ),
+                    use_container_width=True,
+                )
