@@ -3736,31 +3736,18 @@ with tab11:
         if antpool_filtered is None or antpool_filtered.empty:
             st.info("Carica anche il CSV Antpool per vedere il confronto ricavi / MWh.")
         else:
-            # Colonne base che sicuramente esistono in antpool_filtered
-            base_cols = ["date", "total_earnings_btc", "daily_hashrate_ths"]
-
-            # Colonne opzionali che aggiungiamo solo se ci sono
-            optional_cols = []
-            if "earnings_usd" in antpool_filtered.columns:
-                optional_cols.append("earnings_usd")
-            if "btc_price_usd" in antpool_filtered.columns:
-                optional_cols.append("btc_price_usd")
-
-            cols_to_show = [c for c in base_cols + optional_cols if c in antpool_filtered.columns]
-
-            st.dataframe(
-                antpool_filtered[cols_to_show].rename(
-                    columns={
-                        "date": "Date",
-                        "total_earnings_btc": "Earnings [BTC]",
-                        "daily_hashrate_ths": "Hashrate [TH/s]",
-                        "earnings_usd": "Earnings [USD]",
-                        "btc_price_usd": "BTC price [USD]",
-                    }
-                ),
-                use_container_width=True,
+            merged = pd.merge(
+                dfp[["date", "energy_mwh"]],
+                antpool_filtered[
+                    [
+                        "date",
+                        "earnings_usd",
+                        "total_earnings_btc",
+                    ]
+                ],
+                on="date",
+                how="inner",
             )
-
 
             if merged.empty:
                 st.info("Nessun giorno in comune tra Prometheus e Antpool nel periodo selezionato.")
