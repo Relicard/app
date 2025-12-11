@@ -485,6 +485,7 @@ if synota_df is not None or antpool_df is not None or ercot_df is not None:
         [
             "Tutti i dati",
             "Ultima data disponibile",
+            "Giorno specifico",
             "Ultimi 7 giorni",
             "Ultimi 30 giorni",
             "Ultimi 90 giorni",
@@ -493,12 +494,38 @@ if synota_df is not None or antpool_df is not None or ercot_df is not None:
         index=0,
     )
 
+
     if preset == "Tutti i dati":
         start_date, end_date = min_date, max_date
 
     elif preset == "Ultima data disponibile":
         start_date = max_date
         end_date = max_date
+
+    if preset == "Tutti i dati":
+        start_date, end_date = min_date, max_date
+
+    elif preset == "Ultima data disponibile":
+        start_date = max_date
+        end_date = max_date
+
+    elif preset == "Giorno specifico":
+        one_day = st.sidebar.date_input(
+            "Seleziona il giorno",
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date,
+        )
+        # Per sicurezza, se mai restituisse una tupla, prendiamo il primo
+        if isinstance(one_day, tuple):
+            one_day = one_day[0]
+        start_date = one_day
+        end_date = one_day
+
+    elif preset == "Ultimi 7 giorni":
+        start_date = max(min_date, max_date - timedelta(days=6))
+        end_date = max_date
+
 
     elif preset == "Ultimi 7 giorni":
         start_date = max(min_date, max_date - timedelta(days=6))
