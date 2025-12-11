@@ -66,6 +66,37 @@ def parse_synota_csv(file) -> pd.DataFrame:
     df = df.sort_values("date")
     return df
 
+def parse_prometheus_usage(file) -> pd.DataFrame:
+    """
+    Parsa il file XLSX di Prometheus "Energy Usage by Meter".
+    Normalizza in:
+      - date (datetime)
+      - energy_kwh
+      - energy_mwh
+    """
+    # Leggiamo il file Excel
+    df_raw = pd.read_excel(file)
+
+    # La prima riga contiene i veri header: 'ESIID', 'Date', 'Intervals', 'Sum', ...
+    df_raw.columns = df_raw.iloc[0]
+    df_raw = df_raw.iloc[1:].reset_index(drop=True)
+
+    # Costruiamo un dataframe pulito
+    df = pd.DataFrame()
+
+    # Data
+    df["date"] = pd.to_datetime(df_raw["Date"], errors="coerce")
+
+    # Energia: la colonna "Sum" è la somma giornaliera in kWh
+    df["energy_kwh"] = pd.to_numeric(df_raw["Sum"], errors="coerce")
+    df["energy_mwh"] = df["energy_kwh"] / 1000.0
+
+    # Teniamo solo righe valide e ordiniamo
+    df = df.dropna(subset=["date", "energy_mwh"])
+    df = df.sort_values("date")
+
+    return df
+
 
 def parse_antpool_csv(file) -> pd.DataFrame:
     """Parsa il CSV Antpool con i campi: Earnings date, Daily hashrate, Total Earnings."""
@@ -314,18 +345,43 @@ st.sidebar.title("⚙️ Configurazione")
 # 1. CSV principali
 st.sidebar.subheader("1. Carica i CSV principali")
 
+# Sorgente principale per i dati di ENERGIA
+data_source = st.sidebar.radio(
+    "Fonte dati energia",
+    options=["Synota", "Prometheus"],
+    index=0,
+    help="Scegli se usare i dati giornalieri Synota (energia + costi) oppure Prometheus (solo energia).",
+)
+
+# Uploader per i file
 synota_file = st.sidebar.file_uploader("Synota CSV (energia/costi)", type=["csv"], key="synota")
+prometheus_file = st.sidebar.file_uploader("Prometheus XLSX (energia)", type=["xlsx"], key="prometheus")
 antpool_file = st.sidebar.file_uploader("Antpool CSV (hashrate/ricavi)", type=["csv"], key="antpool")
 
+# Dataframe base
 synota_df = None
+prometheus_df = None
 antpool_df = None
-ercot_df = None
 
 if synota_file is not None:
     synota_df = parse_synota_csv(synota_file)
 
+if prometheus_file is not None:
+    prometheus_df = parse_prometheus_usage(prometheus_file)
+
 if antpool_file is not None:
     antpool_df = parse_antpool_csv(antpool_file)
+
+# Dataframe di energia effettivamente usato nel resto dell’app
+energia_source_label = data_source  # "Synota" oppure "Prometheus"
+if data_source == "Synota":
+    energia_df = synota_df
+else:
+    energia_df = prometheus_df
+
+# Alias per compatibilità: da qui in giù il codice continua a usare synota_df / synota_filtered
+synota_df = energia_df
+
 
 
 st.sidebar.subheader("2. Vendite BTC (Kraken)")
@@ -640,29 +696,47 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
 # TAB 3 – ENERGIA / SYNOTA
 # -----------------------------
 with tab3:
-    st.header("⚡ Energia & Costi (Synota)")
+    if energia_source_label == "Synota":
+        st.header("⚡ Energia & Costi (Synota)")
+    else:
+        st.header("⚡ Energia (Prometheus)")
 
     if synota_filtered is None or synota_filtered.empty:
-        st.warning("Nessun dato Synota nel range selezionato.")
+        st.warning("Nessun dato energia nel range selezionato per la fonte scelta.")
     else:
         col1, col2, col3 = st.columns(3)
         total_mwh = synota_filtered["energy_mwh"].sum()
-        total_cost = synota_filtered["invoice_amount_usd"].sum()
-        avg_rate = total_cost / total_mwh if total_mwh > 0 else None
 
         with col1:
             st.metric("Energia totale [MWh]", f"{total_mwh:,.2f}")
-        with col2:
-            st.metric("Costo totale energia [USD]", f"{total_cost:,.2f}")
-        with col3:
-            st.metric("Costo medio [USD/MWh]", f"{avg_rate:,.2f}" if avg_rate else "N/A")
+
+        if energia_source_label == "Synota":
+            total_cost = synota_filtered["invoice_amount_usd"].sum()
+            avg_rate = total_cost / total_mwh if total_mwh > 0 else None
+
+            with col2:
+                st.metric("Costo totale [USD]", f"{total_cost:,.2f}")
+            with col3:
+                st.metric("Tariffa media [USD/MWh]", f"{avg_rate:,.2f}")
+        else:
+            with col2:
+                st.metric("Costo totale [USD]", "N/A")
+            with col3:
+                st.metric("Tariffa media [USD/MWh]", "N/A")
+
 
         st.markdown("### 📉 Grafico giornaliero")
 
         # Selezione campi da visualizzare
         show_energy = st.checkbox("Mostra energia (MWh)", value=True, key="syn_energy")
-        show_invoice = st.checkbox("Mostra Invoice Amount [USD]", value=True, key="syn_invoice")
-        show_rate = st.checkbox("Mostra Effective Rate [USD/MWh]", value=True, key="syn_rate")
+
+        if energia_source_label == "Synota":
+            show_invoice = st.checkbox("Mostra Invoice Amount [USD]", value=True, key="syn_invoice")
+            show_rate = st.checkbox("Mostra Effective Rate [USD/MWh]", value=True, key="syn_rate")
+        else:
+            show_invoice = False
+            show_rate = False
+
 
         fig = go.Figure()
 
@@ -747,9 +821,10 @@ with tab3:
         else:
             st.info("Impossibile calcolare le serie indicizzate (media energia o costi = 0).")
 
-        st.markdown("### 📄 Dati Synota (filtrati)")
-        st.dataframe(
-            synota_filtered[
+        st.markdown("### 📄 Dati energia (filtrati)")
+
+        if energia_source_label == "Synota":
+            df_to_show = synota_filtered[
                 [
                     "date",
                     "energy_mwh",
@@ -763,9 +838,22 @@ with tab3:
                     "invoice_amount_usd": "Invoice [USD]",
                     "effective_rate_usd_per_mwh": "Rate [USD/MWh]",
                 }
-            ),
-            use_container_width=True,
-        )
+            )
+        else:
+            df_to_show = synota_filtered[
+                [
+                    "date",
+                    "energy_mwh",
+                ]
+            ].rename(
+                columns={
+                    "date": "Date",
+                    "energy_mwh": "Energy [MWh]",
+                }
+            )
+
+        st.dataframe(df_to_show, use_container_width=True)
+
         
         # -----------------------------
         # SCOMPOSIZIONE COSTI CONTRATTO SYNOTA / ONCOR
