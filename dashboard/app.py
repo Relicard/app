@@ -91,11 +91,16 @@ def parse_prometheus_usage(file) -> pd.DataFrame:
     df["energy_kwh"] = pd.to_numeric(df_raw["Sum"], errors="coerce")
     df["energy_mwh"] = df["energy_kwh"] / 1000.0
 
+    # Allineiamo lo schema a Synota: colonne costo vuote (NaN)
+    df["invoice_amount_usd"] = pd.NA
+    df["effective_rate_usd_per_mwh"] = pd.NA
+
     # Teniamo solo righe valide e ordiniamo
     df = df.dropna(subset=["date", "energy_mwh"])
     df = df.sort_values("date")
 
     return df
+
 
 
 def parse_antpool_csv(file) -> pd.DataFrame:
@@ -628,7 +633,6 @@ if synota_df is None and antpool_df is None and hosting_df_all is None and ercot
     st.stop()
 
 
-# -----------------------------
 # APPLICAZIONE FILTRO DATA
 # -----------------------------
 if start_date and end_date:
@@ -659,23 +663,30 @@ if start_date and end_date:
         ercot_filtered = filter_by_date(ercot_df, start_date, end_date)
     else:
         ercot_filtered = None
+
+    if prometheus_df is not None:
+        prometheus_filtered = filter_by_date(prometheus_df, start_date, end_date)
+    else:
+        prometheus_filtered = None
 else:
     synota_filtered = synota_df
     antpool_filtered = antpool_df
     hosting_filtered = hosting_df_all
     kraken_filtered = kraken_trades_df
     ercot_filtered = ercot_df
+    prometheus_filtered = prometheus_df
+
 
 
 
 # -----------------------------
 # TABS PRINCIPALI
 # -----------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(
     [
         "📌 Overview & Trends",
         "📊 Charts",
-        "⚡ Energia (Synota)",
+        "⚡ Energia (Synota/Prometheus)",
         "⛏️ Mining (Antpool)",
         "🤝 Hosting",
         "🧠 Smart Analytics",
@@ -683,6 +694,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
         "🔗 Combined View",
         "💰 Vendite BTC",
         "⚡ Prezzi ERCOT LZ_WEST",
+        "⚡ Prometheus (dettaglio)",
     ]
 )
 
@@ -781,40 +793,44 @@ with tab3:
         # -----------------------------
         st.markdown("### 🔍 Confronto relativo energia vs costi (serie indicizzate)")
 
-        synota_rel = synota_filtered.copy()
-
-        # Base = media
-        base_energy = synota_rel["energy_mwh"].mean()
-        base_cost = synota_rel["invoice_amount_usd"].mean()
-
-        # Evita divisioni per zero
-        if base_energy and base_cost:
-            synota_rel["energy_index"] = synota_rel["energy_mwh"] / base_energy * 100
-            synota_rel["cost_index"] = synota_rel["invoice_amount_usd"] / base_cost * 100
-
-            fig_rel = go.Figure()
-
-            fig_rel.add_bar(
-                x=synota_rel["date"],
-                y=synota_rel["energy_index"],
-                name="Energia (indice, 100 = media)",
-            )
-
-            fig_rel.add_bar(
-                x=synota_rel["date"],
-                y=synota_rel["cost_index"],
-                name="Costo energia (indice, 100 = media)",
-            )
-
-            fig_rel.update_layout(
-                xaxis_title="Data",
-                yaxis_title="Indice (100 = media periodo)",
-                hovermode="x unified",
-            )
-
-            st.plotly_chart(fig_rel, use_container_width=True)
+        if energia_source_label != "Synota":
+            st.info("Questo confronto è disponibile solo quando la fonte energia è Synota (dati di costo presenti).")
         else:
-            st.info("Impossibile calcolare le serie indicizzate (media energia o costi = 0).")
+            synota_rel = synota_filtered.copy()
+
+            # Base = media
+            base_energy = synota_rel["energy_mwh"].mean()
+            base_cost = synota_rel["invoice_amount_usd"].mean()
+
+            # Evita divisioni per zero / NaN
+            if base_energy and pd.notna(base_cost) and base_cost != 0:
+                synota_rel["energy_index"] = synota_rel["energy_mwh"] / base_energy * 100
+                synota_rel["cost_index"] = synota_rel["invoice_amount_usd"] / base_cost * 100
+
+                fig_rel = go.Figure()
+
+                fig_rel.add_bar(
+                    x=synota_rel["date"],
+                    y=synota_rel["energy_index"],
+                    name="Energia (indice, 100 = media)",
+                )
+
+                fig_rel.add_bar(
+                    x=synota_rel["date"],
+                    y=synota_rel["cost_index"],
+                    name="Costo energia (indice, 100 = media)",
+                )
+
+                fig_rel.update_layout(
+                    xaxis_title="Data",
+                    yaxis_title="Indice (100 = media periodo)",
+                    hovermode="x unified",
+                )
+
+                st.plotly_chart(fig_rel, use_container_width=True)
+            else:
+                st.info("Impossibile calcolare le serie indicizzate (media energia o costi = 0).")
+
 
         st.markdown("### 📄 Dati energia (filtrati)")
 
@@ -3032,8 +3048,20 @@ with tab2:
             st.markdown("### 💰 Profitto giornaliero (DESMO)")
 
             df_p = combined_ch.copy()
-            df_p["profit_positive"] = df_p["daily_profit_usd"].apply(lambda x: x if x > 0 else None)
-            df_p["profit_negative"] = df_p["daily_profit_usd"].apply(lambda x: x if x < 0 else None)
+
+            # 👇 Assicuriamoci che daily_profit_usd sia numerica
+            df_p["daily_profit_usd"] = pd.to_numeric(df_p["daily_profit_usd"], errors="coerce")
+
+            df_p["profit_positive"] = df_p["daily_profit_usd"].apply(
+                lambda x: x if pd.notna(x) and x > 0 else None
+            )
+            df_p["profit_negative"] = df_p["daily_profit_usd"].apply(
+                lambda x: x if pd.notna(x) and x < 0 else None
+            )
+
+            # 👇 Rolling safe: se tutta NaN, rolling restituisce comunque NaN (nessun DataError)
+            df_p["profit_roll7"] = df_p["daily_profit_usd"].rolling(7, min_periods=1).mean()
+            df_p["profit_roll30"] = df_p["daily_profit_usd"].rolling(30, min_periods=1).mean()
 
             fig_p = go.Figure()
 
@@ -3656,6 +3684,138 @@ with tab10:
                             "Prezzo medio ON [USD/MWh]": "{:,.2f}",
                             "Uptime [%]": "{:,.1f}",
                             "Ore ON equivalenti": "{:,.1f}",
+                        }
+                    ),
+                    use_container_width=True,
+                )
+
+# -----------------------------
+# TAB 11 – ENERGIA PROMETHEUS (DETTAGLIO)
+# -----------------------------
+with tab11:
+    st.header("⚡ Energia – Prometheus (daily usage)")
+
+    if prometheus_filtered is None or prometheus_filtered.empty:
+        st.info("Carica il file Prometheus nella sidebar e seleziona un timeframe valido.")
+    else:
+        dfp = prometheus_filtered.copy().sort_values("date")
+
+        # Metriche base
+        total_mwh = dfp["energy_mwh"].sum()
+        num_days = dfp["date"].dt.normalize().nunique()
+        avg_daily_mwh = total_mwh / num_days if num_days > 0 else 0.0
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Energia totale [MWh]", f"{total_mwh:,.2f}")
+        with col2:
+            st.metric("Numero giorni", num_days)
+        with col3:
+            st.metric("Media giornaliera [MWh]", f"{avg_daily_mwh:,.2f}")
+
+        st.markdown("### 📊 Energia giornaliera (Prometheus)")
+
+        fig_p = go.Figure()
+        fig_p.add_bar(
+            x=dfp["date"],
+            y=dfp["energy_mwh"],
+            name="Energia [MWh]",
+        )
+        fig_p.update_layout(
+            xaxis_title="Data",
+            yaxis_title="Energia [MWh]",
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig_p, use_container_width=True)
+
+        # -----------------------------------
+        # INCROCIO CON ANTPPOOL: RICAVI / MWh
+        # -----------------------------------
+        st.markdown("### 💰 Ricavi mining per MWh (Prometheus vs Antpool)")
+
+        if antpool_filtered is None or antpool_filtered.empty:
+            st.info("Carica anche il CSV Antpool per vedere il confronto ricavi / MWh.")
+        else:
+            # Colonne base che sicuramente esistono in antpool_filtered
+            base_cols = ["date", "total_earnings_btc", "daily_hashrate_ths"]
+
+            # Colonne opzionali che aggiungiamo solo se ci sono
+            optional_cols = []
+            if "earnings_usd" in antpool_filtered.columns:
+                optional_cols.append("earnings_usd")
+            if "btc_price_usd" in antpool_filtered.columns:
+                optional_cols.append("btc_price_usd")
+
+            cols_to_show = [c for c in base_cols + optional_cols if c in antpool_filtered.columns]
+
+            st.dataframe(
+                antpool_filtered[cols_to_show].rename(
+                    columns={
+                        "date": "Date",
+                        "total_earnings_btc": "Earnings [BTC]",
+                        "daily_hashrate_ths": "Hashrate [TH/s]",
+                        "earnings_usd": "Earnings [USD]",
+                        "btc_price_usd": "BTC price [USD]",
+                    }
+                ),
+                use_container_width=True,
+            )
+
+
+            if merged.empty:
+                st.info("Nessun giorno in comune tra Prometheus e Antpool nel periodo selezionato.")
+            else:
+                merged["usd_per_mwh"] = merged["earnings_usd"] / merged["energy_mwh"]
+
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.metric(
+                        "Ricavo medio [USD/MWh]",
+                        f"{merged['usd_per_mwh'].mean():.2f}",
+                    )
+                with col_b:
+                    st.metric(
+                        "Giorni con dati comuni",
+                        len(merged),
+                    )
+
+                fig_rev = go.Figure()
+                fig_rev.add_bar(
+                    x=merged["date"],
+                    y=merged["usd_per_mwh"],
+                    name="Ricavi mining [USD/MWh]",
+                )
+                fig_rev.update_layout(
+                    xaxis_title="Data",
+                    yaxis_title="Ricavi mining [USD/MWh]",
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig_rev, use_container_width=True)
+
+                st.markdown("#### 📄 Dettaglio giornaliero")
+                st.dataframe(
+                    merged[
+                        [
+                            "date",
+                            "energy_mwh",
+                            "earnings_usd",
+                            "total_earnings_btc",
+                            "usd_per_mwh",
+                        ]
+                    ].rename(
+                        columns={
+                            "date": "Date",
+                            "energy_mwh": "Energia [MWh]",
+                            "earnings_usd": "Ricavi mining [USD]",
+                            "total_earnings_btc": "Ricavi mining [BTC]",
+                            "usd_per_mwh": "Ricavi [USD/MWh]",
+                        }
+                    ).style.format(
+                        {
+                            "Energia [MWh]": "{:,.2f}",
+                            "Ricavi mining [USD]": "{:,.2f}",
+                            "Ricavi mining [BTC]": "{:,.6f}",
+                            "Ricavi [USD/MWh]": "{:,.2f}",
                         }
                     ),
                     use_container_width=True,
