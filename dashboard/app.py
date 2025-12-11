@@ -399,6 +399,9 @@ if kraken_file is not None:
 # 3. Prezzi ERCOT LZ_WEST (storico 5 minuti)
 st.sidebar.subheader("3. Prezzi ERCOT (LZ_WEST)")
 
+# 👉 Inizializzazione per evitare NameError
+ercot_df = None
+
 ercot_file = st.sidebar.file_uploader(
     "CSV prezzi ERCOT LZ_WEST (5 min)",
     type=["csv"],
@@ -558,13 +561,6 @@ if synota_df is not None or antpool_df is not None or ercot_df is not None:
         start_date = max_date
         end_date = max_date
 
-    if preset == "Tutti i dati":
-        start_date, end_date = min_date, max_date
-
-    elif preset == "Ultima data disponibile":
-        start_date = max_date
-        end_date = max_date
-
     elif preset == "Giorno specifico":
         one_day = st.sidebar.date_input(
             "Seleziona il giorno",
@@ -572,7 +568,6 @@ if synota_df is not None or antpool_df is not None or ercot_df is not None:
             min_value=min_date,
             max_value=max_date,
         )
-        # Per sicurezza, se mai restituisse una tupla, prendiamo il primo
         if isinstance(one_day, tuple):
             one_day = one_day[0]
         start_date = one_day
