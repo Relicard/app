@@ -1,5 +1,6 @@
 import streamlit as st # type: ignore 
 import pandas as pd # type: ignore
+import numpy as np # type: ignore
 import plotly.graph_objects as go # type: ignore
 from datetime import datetime, timedelta  # type: ignore
 import requests # type: ignore 
@@ -243,6 +244,70 @@ def parse_ercot_price_csv(file) -> pd.DataFrame:
 
 
 
+
+@st.cache_data(show_spinner=False)
+def parse_prometheus_rtm_prices_excel(file) -> pd.DataFrame:
+    """Parsa l'Excel 'RTM Price Extract' (Prometheus) con prezzi RTM per LoadZone/HUB.
+
+    Struttura attesa (prima riga = header logico):
+      Date | LoadZone | Settlement | Intervals | Sum | Min | Max | Avg | 1..100 (prezzi 15-min)
+
+    Note:
+    - Intervals può essere 92/96/100 a seconda del giorno (DST). Le colonne 1..100 sono sempre presenti.
+    - I prezzi sono in USD/MWh.
+    """
+    df0 = pd.read_excel(file, sheet_name=0)
+
+    if df0.empty:
+        return pd.DataFrame()
+
+    # La prima riga contiene i nomi colonna reali
+    header = df0.iloc[0].tolist()
+    df = df0.iloc[1:].copy()
+    df.columns = header
+
+    if "Date" not in df.columns:
+        return pd.DataFrame()
+
+    # Data (normalizzata a giorno)
+    df["date"] = pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
+    df = df.dropna(subset=["date"]).copy()
+
+    # Normalizza testo
+    for c in ["LoadZone", "Settlement"]:
+        if c in df.columns:
+            df[c] = df[c].astype(str).str.strip().str.upper()
+
+    # Colonne intervalli: 1..100
+    interval_cols = [
+        c for c in df.columns
+        if isinstance(c, (int, float)) and float(c).is_integer()
+    ]
+    # Rinominamo in int (1..100) per semplicità
+    rename_map = {c: int(c) for c in interval_cols}
+    df = df.rename(columns=rename_map)
+
+    # Converte numerici principali
+    numeric_cols = []
+    for c in ["Intervals", "Sum", "Min", "Max", "Avg"]:
+        if c in df.columns:
+            numeric_cols.append(c)
+    numeric_cols += [int(c) for c in interval_cols]
+
+    for c in numeric_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Default Intervals se mancante
+    if "Intervals" not in df.columns:
+        df["Intervals"] = 96
+
+    keep = ["date", "LoadZone", "Settlement", "Intervals", "Avg", "Min", "Max"]
+    keep = [c for c in keep if c in df.columns] + sorted([c for c in df.columns if isinstance(c, int)])
+
+    return df[keep].sort_values("date")
+
+
 def get_btc_price_from_api() -> float | None:
     """
     Recupera il prezzo BTC/USD da CoinGecko.
@@ -464,6 +529,21 @@ ercot_file = st.sidebar.file_uploader(
 if ercot_file is not None:
     ercot_df = parse_ercot_price_csv(ercot_file)
 
+
+# 3b. Prezzi RTM (Prometheus extract - Excel)
+st.sidebar.subheader("3b. Prezzi RTM (Prometheus extract)")
+
+rtm_prices_df = None
+rtm_prices_file = st.sidebar.file_uploader(
+    "Prometheus RTM Price Extract (xlsx)",
+    type=["xlsx"],
+    key="prometheus_rtm_prices_xlsx",
+)
+
+if rtm_prices_file is not None:
+    rtm_prices_df = parse_prometheus_rtm_prices_excel(rtm_prices_file)
+
+
 st.sidebar.subheader("4. Prezzo Bitcoin")
 
 
@@ -577,7 +657,7 @@ if hosting_files:
 
 
 # 6. Range date globale (Synota / Antpool / ERCOT)
-if synota_df is not None or antpool_df is not None or ercot_df is not None:
+if synota_df is not None or antpool_df is not None or ercot_df is not None or rtm_prices_df is not None:
     all_dates = []
     if synota_df is not None:
         all_dates.extend(list(synota_df["date"]))
@@ -585,6 +665,8 @@ if synota_df is not None or antpool_df is not None or ercot_df is not None:
         all_dates.extend(list(antpool_df["date"]))
     if ercot_df is not None:
         all_dates.extend(list(ercot_df["date"]))
+    if rtm_prices_df is not None:
+        all_dates.extend(list(rtm_prices_df["date"]))
 
     min_date = min(all_dates).date()
     max_date = max(all_dates).date()
@@ -676,7 +758,7 @@ st.markdown(
 # -----------------------------
 # SE NESSUN CSV PRINCIPALE
 # -----------------------------
-if synota_df is None and antpool_df is None and hosting_df_all is None and ercot_df is None:
+if synota_df is None and antpool_df is None and hosting_df_all is None and ercot_df is None and rtm_prices_df is None:
     st.info("👈 Carica almeno un CSV nella sidebar per iniziare.")
     st.stop()
 
@@ -712,6 +794,11 @@ if start_date and end_date:
     else:
         ercot_filtered = None
 
+    if rtm_prices_df is not None:
+        rtm_prices_filtered = filter_by_date(rtm_prices_df, start_date, end_date)
+    else:
+        rtm_prices_filtered = None
+
     if prometheus_df is not None:
         prometheus_filtered = filter_by_date(prometheus_df, start_date, end_date)
     else:
@@ -722,6 +809,7 @@ else:
     hosting_filtered = hosting_df_all
     kraken_filtered = kraken_trades_df
     ercot_filtered = ercot_df
+    rtm_prices_filtered = rtm_prices_df
     prometheus_filtered = prometheus_df
 
 
@@ -730,7 +818,7 @@ else:
 # -----------------------------
 # TABS PRINCIPALI
 # -----------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs(
     [
         "📌 Overview & Trends",
         "📊 Charts",
@@ -743,6 +831,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(
         "💰 Vendite BTC",
         "⚡ Prezzi ERCOT LZ_WEST",
         "⚡ Prometheus (dettaglio)",
+        "⚡ RTM Prices (Zones/Hubs)",
     ]
 )
 
@@ -3896,3 +3985,291 @@ with tab11:
                     ),
                     use_container_width=True,
                 )
+
+
+
+# -----------------------------
+# TAB 12 – PREZZI RTM (PROMETHEUS EXTRACT)
+# -----------------------------
+with tab12:
+    st.header("⚡ RTM Prices – Zones/Hubs (Prometheus extract)")
+
+    if rtm_prices_filtered is None or rtm_prices_filtered.empty:
+        st.info("Carica l'Excel RTM Price Extract nella sidebar e seleziona un timeframe valido.")
+    else:
+        df_rtm = rtm_prices_filtered.copy().sort_values("date")
+
+        # Selezione zona/settlement
+        df_rtm["pair"] = df_rtm["LoadZone"].astype(str) + " " + df_rtm["Settlement"].astype(str)
+        pairs = sorted(df_rtm["pair"].dropna().unique().tolist())
+
+        selected_pair = st.selectbox(
+            "Seleziona LoadZone / Settlement",
+            options=pairs,
+            index=pairs.index("WEST LZ") if "WEST LZ" in pairs else 0,
+        )
+
+        lz, sett = selected_pair.split(" ", 1)
+        dfp = df_rtm[(df_rtm["LoadZone"] == lz) & (df_rtm["Settlement"] == sett)].copy()
+
+        if dfp.empty:
+            st.warning("Nessun record per la selezione effettuata nel range scelto.")
+            st.stop()
+
+        # -----------------------------
+        # SEZIONE 1: Stima costo usando AVG giornaliero
+        # -----------------------------
+        st.markdown("### 1) 💡 Stima costo usando la **media giornaliera (Avg)**")
+
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            kw_on = st.number_input(
+                "Consumo medio quando ON [kW] (costante)",
+                min_value=0.0,
+                value=1000.0,
+                step=10.0,
+            )
+        with col_b:
+            st.caption("Energia ON giornaliera")
+            st.code(f"{kw_on:.1f} kW × 24 h / 1000 = {kw_on*24/1000:.3f} MWh/giorno")
+        with col_c:
+            st.caption("Nota")
+            st.write("I prezzi sono in **USD/MWh**.")
+
+        dfp["energy_mwh_on"] = (kw_on * 24.0) / 1000.0
+        dfp["cost_usd_on_avg"] = dfp["Avg"] * dfp["energy_mwh_on"]
+
+        total_days = int(dfp["date"].dt.normalize().nunique())
+        total_energy = float(dfp["energy_mwh_on"].sum())
+        total_cost = float(dfp["cost_usd_on_avg"].sum())
+        avg_price_weighted = (total_cost / total_energy) if total_energy > 0 else np.nan
+
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.metric("Giorni", f"{total_days}")
+        with m2:
+            st.metric("Energia totale [MWh]", f"{total_energy:,.2f}")
+        with m3:
+            st.metric("Costo totale [USD]", f"{total_cost:,.2f}")
+        with m4:
+            st.metric("Prezzo medio ponderato [USD/MWh]", f"{avg_price_weighted:,.2f}" if np.isfinite(avg_price_weighted) else "N/A")
+
+        # Tabelle daily / monthly
+        df_daily = dfp[["date", "Avg", "energy_mwh_on", "cost_usd_on_avg"]].copy()
+        df_daily = df_daily.rename(
+            columns={
+                "Avg": "avg_usd_mwh",
+                "energy_mwh_on": "energy_mwh",
+                "cost_usd_on_avg": "cost_usd",
+            }
+        )
+        df_daily["effective_usd_mwh"] = df_daily["cost_usd"] / df_daily["energy_mwh"]
+
+        df_daily["month"] = df_daily["date"].dt.to_period("M").dt.to_timestamp()
+        df_month = (
+            df_daily.groupby("month", as_index=False)
+            .agg(
+                cost_usd=("cost_usd", "sum"),
+                energy_mwh=("energy_mwh", "sum"),
+                avg_usd_mwh=("avg_usd_mwh", "mean"),
+            )
+            .sort_values("month")
+        )
+        df_month["effective_usd_mwh"] = df_month["cost_usd"] / df_month["energy_mwh"]
+        df_month["days"] = df_daily.groupby("month")["date"].nunique().values
+
+        # Grafici
+        st.markdown("#### 📈 Grafici (Avg giornaliero)")
+        c1, c2 = st.columns(2)
+
+        with c1:
+            fig_cost_d = go.Figure()
+            fig_cost_d.add_bar(x=df_daily["date"], y=df_daily["cost_usd"], name="Costo giornaliero [USD]")
+            fig_cost_d.update_layout(xaxis_title="Data", yaxis_title="Costo [USD]", hovermode="x unified")
+            st.plotly_chart(fig_cost_d, use_container_width=True)
+
+        with c2:
+            fig_price_d = go.Figure()
+            fig_price_d.add_trace(go.Scatter(x=df_daily["date"], y=df_daily["avg_usd_mwh"], mode="lines", name="Avg [USD/MWh]"))
+            fig_price_d.update_layout(xaxis_title="Data", yaxis_title="Prezzo [USD/MWh]", hovermode="x unified")
+            st.plotly_chart(fig_price_d, use_container_width=True)
+
+        fig_month = go.Figure()
+        fig_month.add_bar(x=df_month["month"], y=df_month["cost_usd"], name="Costo mensile [USD]")
+        fig_month.update_layout(xaxis_title="Mese", yaxis_title="Costo [USD]", hovermode="x unified")
+        st.plotly_chart(fig_month, use_container_width=True)
+
+        with st.expander("📋 Tabelle (Avg giornaliero)"):
+            st.markdown("**Daily**")
+            st.dataframe(
+                df_daily.sort_values("date").style.format(
+                    {
+                        "avg_usd_mwh": "{:,.2f}",
+                        "energy_mwh": "{:,.3f}",
+                        "cost_usd": "{:,.2f}",
+                        "effective_usd_mwh": "{:,.2f}",
+                    }
+                ),
+                use_container_width=True,
+            )
+
+            st.markdown("**Monthly**")
+            st.dataframe(
+                df_month.sort_values("month").style.format(
+                    {
+                        "cost_usd": "{:,.2f}",
+                        "energy_mwh": "{:,.2f}",
+                        "avg_usd_mwh": "{:,.2f}",
+                        "effective_usd_mwh": "{:,.2f}",
+                    }
+                ),
+                use_container_width=True,
+            )
+
+        st.markdown("---")
+
+        # -----------------------------
+        # SEZIONE 2: Curtailment con prezzi 15-min (1..100)
+        # -----------------------------
+        st.markdown("### 2) 🧪 Simulatore spegnimento ASIC (prezzi **15-min**)")
+
+        st.write(
+            "Usiamo i prezzi 15-min (colonne 1..100). "
+            "Per ogni intervallo: se **prezzo > soglia** → OFF (sleep); altrimenti ON. "
+            "Il file usa **Intervals** per gestire giorni da 92/96/100 intervalli (DST)."
+        )
+
+        colx1, colx2, colx3 = st.columns(3)
+        with colx1:
+            thr = st.number_input(
+                "Soglia spegnimento [USD/MWh] (OFF se > soglia)",
+                min_value=0.0,
+                value=100.0,
+                step=1.0,
+            )
+        with colx2:
+            kw_sleep = st.number_input(
+                "Consumo stimato a SLEEP [kW]",
+                min_value=0.0,
+                value=50.0,
+                step=1.0,
+            )
+        with colx3:
+            st.caption("Consumo ON")
+            st.write(f"Usiamo **{kw_on:.1f} kW** (lo stesso sopra).")
+
+        # Colonne intervalli disponibili
+        interval_cols = [c for c in dfp.columns if isinstance(c, int)]
+        interval_cols = [c for c in interval_cols if 1 <= c <= 100]
+        interval_cols = sorted(interval_cols)
+
+        prices = dfp[interval_cols].to_numpy(dtype=float)
+        intervals = dfp["Intervals"].fillna(96).astype(int).to_numpy()
+
+        # mask valid per DST (es: 92/96/100)
+        idxs = np.arange(1, len(interval_cols) + 1)
+        valid_mask = idxs[None, :] <= intervals[:, None]
+
+        on_mask = (prices <= thr) & valid_mask
+
+        kw_matrix = np.where(on_mask, kw_on, kw_sleep)
+        mwh_matrix = (kw_matrix * 0.25) / 1000.0  # 15 min = 0.25h
+
+        # zero out invalid intervals
+        mwh_matrix = np.where(valid_mask, mwh_matrix, 0.0)
+        cost_matrix = np.where(valid_mask, prices * mwh_matrix, 0.0)
+
+        df_daily2 = pd.DataFrame(
+            {
+                "date": dfp["date"].values,
+                "cost_usd": cost_matrix.sum(axis=1),
+                "energy_mwh": mwh_matrix.sum(axis=1),
+                "uptime_pct": (on_mask.sum(axis=1) / valid_mask.sum(axis=1)) * 100.0,
+                "hours_on": on_mask.sum(axis=1) * 0.25,
+            }
+        )
+        df_daily2["effective_usd_mwh"] = df_daily2["cost_usd"] / df_daily2["energy_mwh"]
+        df_daily2["month"] = pd.to_datetime(df_daily2["date"]).dt.to_period("M").dt.to_timestamp()
+
+        total_cost2 = float(df_daily2["cost_usd"].sum())
+        total_energy2 = float(df_daily2["energy_mwh"].sum())
+        avg_eff2 = (total_cost2 / total_energy2) if total_energy2 > 0 else np.nan
+        avg_uptime2 = float(df_daily2["uptime_pct"].mean())
+
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        with cc1:
+            st.metric("Costo totale [USD]", f"{total_cost2:,.2f}")
+        with cc2:
+            st.metric("Energia totale [MWh]", f"{total_energy2:,.2f}")
+        with cc3:
+            st.metric("Prezzo medio ponderato [USD/MWh]", f"{avg_eff2:,.2f}" if np.isfinite(avg_eff2) else "N/A")
+        with cc4:
+            st.metric("Uptime medio [%]", f"{avg_uptime2:,.1f}")
+
+        df_month2 = (
+            df_daily2.groupby("month", as_index=False)
+            .agg(
+                cost_usd=("cost_usd", "sum"),
+                energy_mwh=("energy_mwh", "sum"),
+                uptime_pct=("uptime_pct", "mean"),
+                hours_on=("hours_on", "sum"),
+            )
+            .sort_values("month")
+        )
+        df_month2["effective_usd_mwh"] = df_month2["cost_usd"] / df_month2["energy_mwh"]
+
+        st.markdown("#### 📈 Grafici (15-min con cut-off)")
+        g1, g2 = st.columns(2)
+
+        with g1:
+            fig_d2 = go.Figure()
+            fig_d2.add_bar(x=df_daily2["date"], y=df_daily2["cost_usd"], name="Costo giornaliero [USD]")
+            fig_d2.update_layout(xaxis_title="Data", yaxis_title="Costo [USD]", hovermode="x unified")
+            st.plotly_chart(fig_d2, use_container_width=True)
+
+        with g2:
+            fig_eff = go.Figure()
+            fig_eff.add_trace(go.Scatter(x=df_daily2["date"], y=df_daily2["effective_usd_mwh"], mode="lines", name="Prezzo effettivo [USD/MWh]"))
+            fig_eff.add_trace(go.Scatter(x=df_daily2["date"], y=df_daily2["uptime_pct"], mode="lines", name="Uptime [%]", yaxis="y2"))
+            fig_eff.update_layout(
+                xaxis_title="Data",
+                yaxis=dict(title="Prezzo [USD/MWh]"),
+                yaxis2=dict(title="Uptime [%]", overlaying="y", side="right"),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_eff, use_container_width=True)
+
+        fig_m2 = go.Figure()
+        fig_m2.add_bar(x=df_month2["month"], y=df_month2["cost_usd"], name="Costo mensile [USD]")
+        fig_m2.update_layout(xaxis_title="Mese", yaxis_title="Costo [USD]", hovermode="x unified")
+        st.plotly_chart(fig_m2, use_container_width=True)
+
+        with st.expander("📋 Tabelle (15-min con cut-off)"):
+            st.markdown("**Daily**")
+            st.dataframe(
+                df_daily2.sort_values("date").style.format(
+                    {
+                        "cost_usd": "{:,.2f}",
+                        "energy_mwh": "{:,.3f}",
+                        "effective_usd_mwh": "{:,.2f}",
+                        "uptime_pct": "{:,.1f}",
+                        "hours_on": "{:,.1f}",
+                    }
+                ),
+                use_container_width=True,
+            )
+
+            st.markdown("**Monthly**")
+            st.dataframe(
+                df_month2.sort_values("month").style.format(
+                    {
+                        "cost_usd": "{:,.2f}",
+                        "energy_mwh": "{:,.2f}",
+                        "effective_usd_mwh": "{:,.2f}",
+                        "uptime_pct": "{:,.1f}",
+                        "hours_on": "{:,.1f}",
+                    }
+                ),
+                use_container_width=True,
+            )
+
