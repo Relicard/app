@@ -4,7 +4,7 @@ import numpy as np # type: ignore
 import plotly.graph_objects as go # type: ignore
 from datetime import datetime, timedelta  # type: ignore
 import requests # type: ignore 
-
+import calendar
 
 
 # -----------------------------
@@ -15,7 +15,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# Stato per memorizzare il prezzo medio di vendita selezionato nella tab Vendite BTC
 if "selected_sell_avg_price" not in st.session_state:
     st.session_state["selected_sell_avg_price"] = None
 
@@ -27,10 +26,8 @@ def parse_synota_csv(file) -> pd.DataFrame:
     """Parsa il CSV Synota con i campi: Settlement Start, Energy Delivered, Invoice Amount, Effective Rate."""
     df = pd.read_csv(file)
 
-    # Data
     df["date"] = pd.to_datetime(df["Settlement Start"], format="%m/%d/%Y")
 
-    # Energia kWh -> MWh
     def parse_energy(s):
         if isinstance(s, str):
             s = s.replace("kWh", "").replace(",", "").strip()
@@ -40,7 +37,6 @@ def parse_synota_csv(file) -> pd.DataFrame:
     df["energy_kwh"] = df["Energy Delivered"].apply(parse_energy)
     df["energy_mwh"] = df["energy_kwh"] / 1000.0
 
-    # Importi $
     def parse_money(s):
         if isinstance(s, str):
             s = s.replace("$", "").replace(",", "").strip()
@@ -49,7 +45,6 @@ def parse_synota_csv(file) -> pd.DataFrame:
 
     df["invoice_amount_usd"] = df["Invoice Amount"].apply(parse_money)
 
-    # $/MWh
     def parse_rate(s):
         if isinstance(s, str):
             s = (
@@ -63,7 +58,6 @@ def parse_synota_csv(file) -> pd.DataFrame:
 
     df["effective_rate_usd_per_mwh"] = df["Effective Rate"].apply(parse_rate)
 
-    # Ordina per data
     df = df.sort_values("date")
     return df
 
@@ -78,21 +72,16 @@ def parse_prometheus_usage(file) -> pd.DataFrame:
       - effective_rate_usd_per_mwh
     """
 
-    # Legge il CSV così com'è
     df0 = pd.read_csv(file)
 
-    # La riga 1 contiene gli header veri (Date, Hour, Avg Load (MW), ...)
     header = df0.iloc[1]
     df = df0.iloc[2:].copy()
     df.columns = header.values
 
-    # Teniamo solo le righe con una data valida
     df = df[df["Date"].notna()].copy()
 
-    # Data (formato tipo "07/21/2025")
     df["date"] = pd.to_datetime(df["Date"], format="%m/%d/%Y", errors="coerce")
 
-    # Helper per numeri con virgola decimale "0,000" / "1.234,56"
     def parse_num(x):
         if isinstance(x, (int, float)):
             return float(x)
@@ -4273,3 +4262,547 @@ with tab12:
                 use_container_width=True,
             )
 
+        st.markdown("---")
+        # -----------------------------
+        # SEZIONE 3: Forecast futuro (storico RTM 15-min + add-on calcolato da picco)
+        # -----------------------------
+        st.markdown("### 3) 🔮 Forecast prezzi futuri (storico **15-min** + add-on)")
+
+        if rtm_prices_df is None or rtm_prices_df.empty:
+            st.info("Carica l'Excel RTM Price Extract (xlsx) nella sidebar per usare il forecast.")
+        else:
+            # Usiamo il DF completo (non filtrato dal date range globale),
+            # così possiamo stimare mesi futuri usando lo storico disponibile.
+            df_all = rtm_prices_df.copy().sort_values("date")
+
+            # Manteniamo la stessa selezione LoadZone/Settlement della tab
+            df_all["pair"] = df_all["LoadZone"].astype(str) + " " + df_all["Settlement"].astype(str)
+            df_all = df_all[df_all["pair"] == selected_pair].copy()
+
+            if df_all.empty:
+                st.warning("Nessun dato storico disponibile per la coppia selezionata (LoadZone/Settlement).")
+                st.stop()
+
+           # -----------------------------
+            # 3A) Add-on + modalità Uptime/Cut-off
+            # -----------------------------
+            st.markdown("#### 3A) 🧱 Add-on + Uptime / Cut-off (ON/OFF)")
+
+            cA1, cA2, cA3, cA4 = st.columns(4)
+            with cA1:
+                peak_kwh_month = st.number_input(
+                    "kWh di picco del mese (es. 720)",
+                    min_value=0.0,
+                    value=720.0,
+                    step=1.0,
+                )
+            with cA2:
+                peak_multiplier_usd = st.number_input(
+                    "Valore da moltiplicare (es. 11$)",
+                    min_value=0.0,
+                    value=11.0,
+                    step=0.5,
+                )
+            with cA3:
+                days_assumed = st.number_input(
+                    "Giorni mese (assunzione)",
+                    min_value=1,
+                    value=30,
+                    step=1,
+                )
+            with cA4:
+                st.caption("Ore/giorno")
+                st.code("24")
+
+            total_usd_peak = peak_kwh_month * peak_multiplier_usd
+            st.metric("Totale USD (picco×moltiplicatore)", f"{total_usd_peak:,.2f}")
+
+            mode = st.radio(
+                "Modalità controllo (equivalenti):",
+                ["Cut-off soglia [USD/MWh]", "Uptime medio [%]"],
+                horizontal=True,
+            )
+
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                off_threshold_usd_mwh = st.number_input(
+                    "Soglia spegnimento [USD/MWh] (OFF se > soglia)",
+                    min_value=0.0,
+                    value=80.0,
+                    step=5.0,
+                    disabled=(mode != "Cut-off soglia [USD/MWh]"),
+                )
+            with col_m2:
+                uptime_pct_input = st.number_input(
+                    "Uptime medio [%]",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=90.0,
+                    step=1.0,
+                    disabled=(mode != "Uptime medio [%]"),
+                    help="Interpreto: ON per la percentuale di intervalli più economici (cut-off implicito).",
+                )
+
+            # -----------------------------
+            # 3B) Mese target + storico coerente
+            # -----------------------------
+            st.markdown("#### 3B) 🗓️ Mese target + storico coerente")
+
+            target_date = st.date_input(
+                "Seleziona un giorno del mese futuro (useremo solo mese/anno)",
+                value=datetime(datetime.now().year + 1, 1, 1).date(),
+            )
+            target_month = target_date.month
+            target_year = target_date.year
+
+            df_all["year"] = df_all["date"].dt.year
+            df_all["month"] = df_all["date"].dt.month
+
+            years_available = sorted(df_all.loc[df_all["month"] == target_month, "year"].dropna().unique().tolist())
+            if not years_available:
+                st.warning("Non ci sono anni disponibili nello storico per il mese selezionato.")
+                st.stop()
+
+            # Evita anni futuri se per caso presenti
+            years_available = [y for y in years_available if y < target_year] or years_available
+
+            max_years = len(years_available)
+            n_years = st.slider(
+                "Quanti anni storici usare (stesso mese)?",
+                min_value=1,
+                max_value=max_years,
+                value=min(3, max_years),
+            )
+
+            years_used = sorted(years_available[-n_years:])
+
+            st.write(f"**Mese target:** {target_year}-{target_month:02d}")
+            st.write(f"**Anni usati per lo storico:** {', '.join(map(str, years_used))}")
+
+            # -----------------------------
+            # 3C) Calcolo stima “ON only” + uptime + add-on uptime-aware
+            # -----------------------------
+            st.markdown("#### 3C) 📊 Stima (solo intervalli ON) + uptime + add-on")
+
+            interval_cols = [c for c in df_all.columns if isinstance(c, int)]
+            interval_cols = sorted([c for c in interval_cols if 1 <= c <= 100])
+            if not interval_cols:
+                st.warning("Non trovo le colonne 15-min (1..100). Controlla il parsing dell'xlsx.")
+                st.stop()
+
+            rows = []
+            for y in years_used:
+                dfx = df_all[(df_all["year"] == y) & (df_all["month"] == target_month)].copy()
+                if dfx.empty:
+                    continue
+
+                prices = dfx[interval_cols].to_numpy(dtype=float)
+                intervals = dfx["Intervals"].fillna(96).astype(int).to_numpy()
+
+                idxs = np.arange(1, len(interval_cols) + 1)
+                valid_mask = idxs[None, :] <= intervals[:, None]
+
+                valid_prices = prices[valid_mask]
+                valid_prices = valid_prices[np.isfinite(valid_prices)]
+
+                if valid_prices.size == 0:
+                    continue
+
+                # Determina ON-mask in 2 modi equivalenti
+                if mode == "Cut-off soglia [USD/MWh]":
+                    threshold_used = float(off_threshold_usd_mwh)
+                    on_prices = valid_prices[valid_prices <= threshold_used]
+                    uptime_frac = float(on_prices.size / valid_prices.size) if valid_prices.size > 0 else 0.0
+                else:
+                    uptime_frac = float(uptime_pct_input) / 100.0
+                    uptime_frac = max(0.0, min(1.0, uptime_frac))
+                    # ON = prendo la quota più economica -> cut-off implicito = percentile uptime%
+                    threshold_used = float(np.quantile(valid_prices, uptime_frac)) if uptime_frac > 0 else 0.0
+                    on_prices = valid_prices[valid_prices <= threshold_used]
+
+                    # (Per robustezza: se tanti valori uguali al cut-off possono sballare l’esatto %, ma va bene)
+                    uptime_frac = float(on_prices.size / valid_prices.size) if valid_prices.size > 0 else uptime_frac
+
+                hist_avg_all = float(valid_prices.mean())
+                hist_avg_on = float(on_prices.mean()) if on_prices.size > 0 else np.nan
+
+                # kWh presunti "effettivi" = base * uptime
+                presumed_kwh_eff = peak_kwh_month * float(days_assumed) * 24.0 * uptime_frac
+                addon_usd_per_kwh = (total_usd_peak / presumed_kwh_eff) if presumed_kwh_eff > 0 else 0.0
+                addon_usd_per_mwh = addon_usd_per_kwh * 1000.0
+
+                est_allin_on = (hist_avg_on + addon_usd_per_mwh) if np.isfinite(hist_avg_on) else np.nan
+
+                rows.append(
+                    {
+                        "year": y,
+                        "uptime_pct": uptime_frac * 100.0,
+                        "cutoff_used_usd_mwh": threshold_used,
+                        "hist_avg_all_usd_mwh": hist_avg_all,
+                        "hist_avg_on_usd_mwh": hist_avg_on,
+                        "addon_usd_mwh": addon_usd_per_mwh,
+                        "est_allin_on_usd_mwh": est_allin_on,
+                        "days_in_month_data": int(dfx["date"].dt.normalize().nunique()),
+                    }
+                )
+
+            if not rows:
+                st.warning("Nessun dato calcolabile per gli anni selezionati.")
+                st.stop()
+
+            forecast_df = pd.DataFrame(rows).sort_values("year")
+
+            # -----------------------------
+            # Trend YoY: "Prezzo di tendenza" (su storico del mese)
+            # -----------------------------
+            # Usiamo il prezzo storico ON-only come base trend (coerente col cut-off/uptime)
+            trend_base_col = "hist_avg_on_usd_mwh"
+
+            trend_df = forecast_df[["year", trend_base_col]].dropna().sort_values("year").copy()
+            trend_df["yoy"] = trend_df[trend_base_col].pct_change()  # (P_t / P_{t-1}) - 1
+
+            # Media YoY sugli ultimi anni disponibili (dentro years_used)
+            yoy_values = trend_df["yoy"].dropna()
+
+            trend_yoy_avg = float(yoy_values.mean()) if len(yoy_values) > 0 else 0.0
+
+            # Ultimo prezzo disponibile (es. 2025)
+            last_year = int(trend_df["year"].max())
+            last_price = float(trend_df.loc[trend_df["year"] == last_year, trend_base_col].iloc[0])
+
+            trend_price = last_price * (1.0 + trend_yoy_avg)
+
+            # Trend ALL-IN (opzionale ma molto utile): aggiungo anche l'add-on medio
+            addon_avg = float(forecast_df["addon_usd_mwh"].mean())
+            trend_price_allin = trend_price + addon_avg
+
+
+            if mode == "Uptime medio [%]":
+                avg_cutoff = float(forecast_df["cutoff_used_usd_mwh"].mean())
+                p10_cutoff = float(forecast_df["cutoff_used_usd_mwh"].quantile(0.10))
+                p90_cutoff = float(forecast_df["cutoff_used_usd_mwh"].quantile(0.90))
+
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Cut-off implicito medio [USD/MWh]", f"{avg_cutoff:,.2f}")
+                with c2:
+                    st.metric("Cut-off implicito P10 [USD/MWh]", f"{p10_cutoff:,.2f}")
+                with c3:
+                    st.metric("Cut-off implicito P90 [USD/MWh]", f"{p90_cutoff:,.2f}")
+
+                st.caption("Cut-off implicito = percentile dei prezzi RTM 15-min coerente con l’uptime inserito.")
+
+            # Metriche riassuntive
+            mean_uptime = float(forecast_df["uptime_pct"].mean())
+            mean_on = float(forecast_df["hist_avg_on_usd_mwh"].mean())
+            mean_allin = float(forecast_df["est_allin_on_usd_mwh"].mean())
+            min_allin = float(forecast_df["est_allin_on_usd_mwh"].min())
+            max_allin = float(forecast_df["est_allin_on_usd_mwh"].max())
+
+            m1, m2, m3, m4, m5 = st.columns(5)
+            with m1:
+                st.metric("Uptime medio [%]", f"{mean_uptime:,.1f}")
+            with m2:
+                st.metric("Storico ON avg [USD/MWh]", f"{mean_on:,.2f}")
+            with m3:
+                st.metric("ALL-IN ON avg [USD/MWh]", f"{mean_allin:,.2f}")
+            with m4:
+                st.metric("ALL-IN min [USD/MWh]", f"{min_allin:,.2f}")
+            with m5:
+                st.metric("ALL-IN max [USD/MWh]", f"{max_allin:,.2f}")
+
+
+            t1, t2, t3 = st.columns(3)
+            with t1:
+                st.metric("Trend YoY medio [%]", f"{trend_yoy_avg*100:,.2f}%")
+            with t2:
+                st.metric(f"Prezzo di tendenza (ON) [{last_year}→{target_year}] [USD/MWh]", f"{trend_price:,.2f}")
+            with t3:
+                st.metric(f"Tendenza ALL-IN (ON) [USD/MWh]", f"{trend_price_allin:,.2f}")
+
+
+            with st.expander("📋 Dettaglio forecast (per anno)"):
+                st.dataframe(
+                    forecast_df.rename(
+                        columns={
+                            "year": "Year",
+                            "uptime_pct": "Uptime [%]",
+                            "cutoff_used_usd_mwh": "Cut-off used [USD/MWh]",
+                            "hist_avg_all_usd_mwh": "Historical avg ALL (15-min) [USD/MWh]",
+                            "hist_avg_on_usd_mwh": "Historical avg ON only [USD/MWh]",
+                            "addon_usd_mwh": "Add-on (uptime-aware) [USD/MWh]",
+                            "est_allin_on_usd_mwh": "Estimated ALL-IN (ON) [USD/MWh]",
+                            "days_in_month_data": "Days covered",
+                        }
+                    ).style.format(
+                        {
+                            "Uptime [%]": "{:,.1f}",
+                            "Cut-off used [USD/MWh]": "{:,.2f}",
+                            "Historical avg ALL (15-min) [USD/MWh]": "{:,.2f}",
+                            "Historical avg ON only [USD/MWh]": "{:,.2f}",
+                            "Add-on (uptime-aware) [USD/MWh]": "{:,.2f}",
+                            "Estimated ALL-IN (ON) [USD/MWh]": "{:,.2f}",
+                        }
+                    ),
+                    use_container_width=True,
+                )
+
+
+            # -----------------------------
+            # 3D) 📈 Grafico forecast
+            # -----------------------------
+            st.markdown("#### 3D) 📈 Grafico forecast")
+
+            fig_fore = go.Figure()
+
+            fig_fore.add_bar(
+                x=forecast_df["year"],
+                y=forecast_df["hist_avg_on_usd_mwh"],
+                name="Storico ON only [USD/MWh]",
+            )
+
+            fig_fore.add_scatter(
+                x=forecast_df["year"],
+                y=forecast_df["est_allin_on_usd_mwh"],
+                mode="lines+markers",
+                name="ALL-IN (ON) [USD/MWh]",
+            )
+
+            # Punto Trend
+            fig_fore.add_scatter(
+                x=[target_year],
+                y=[trend_price_allin],
+                mode="markers+text",
+                text=["Trend"],
+                textposition="top center",
+                name="Trend (ALL-IN) – proiezione",
+            )
+
+            fig_fore.update_layout(
+                xaxis_title="Anno",
+                yaxis_title="Prezzo [USD/MWh]",
+                hovermode="x unified",
+            )
+
+            st.plotly_chart(fig_fore, use_container_width=True)
+
+            st.markdown("---")
+            st.markdown("### 3E) 🗓️ Timeline mensile (T0 al centro) – All-in ON (storico / stimato / tendenza)")
+
+            # Quanti mesi a sinistra/destra
+            colw1, colw2 = st.columns(2)
+            with colw1:
+                months_back = st.slider("Mesi precedenti (a sinistra)", 1, 24, 6)
+            with colw2:
+                months_fwd = st.slider("Mesi futuri (a destra)", 1, 24, 6)
+
+            # Helper: lista mesi centrata su T0 (mese corrente)
+            today = datetime.now()
+            t0_y, t0_m = today.year, today.month
+
+            def add_months(y, m, delta):
+                # delta può essere negativo/positivo
+                m2 = m + delta
+                y2 = y + (m2 - 1) // 12
+                m2 = (m2 - 1) % 12 + 1
+                return y2, m2
+
+            months_axis = []
+            for d in range(-months_back, months_fwd + 1):
+                yy, mm = add_months(t0_y, t0_m, d)
+                months_axis.append((yy, mm))
+
+            def month_label(yy, mm):
+                return f"{yy}-{mm:02d}"
+
+            # Helper: calcola ON-only avg per un dataset di prezzi 15-min (array) + uptime_frac secondo mode
+            def compute_on_stats(valid_prices: np.ndarray, mode: str, off_thr: float, uptime_pct: float):
+                valid_prices = valid_prices[np.isfinite(valid_prices)]
+                if valid_prices.size == 0:
+                    return np.nan, 0.0, np.nan  # (avg_on, uptime_frac, cutoff_used)
+
+                if mode == "Cut-off soglia [USD/MWh]":
+                    cutoff_used = float(off_thr)
+                    on_prices = valid_prices[valid_prices <= cutoff_used]
+                    uptime_frac = float(on_prices.size / valid_prices.size)
+                else:
+                    uptime_frac = max(0.0, min(1.0, float(uptime_pct) / 100.0))
+                    cutoff_used = float(np.quantile(valid_prices, uptime_frac)) if uptime_frac > 0 else 0.0
+                    on_prices = valid_prices[valid_prices <= cutoff_used]
+                    uptime_frac = float(on_prices.size / valid_prices.size) if valid_prices.size > 0 else uptime_frac
+
+                avg_on = float(on_prices.mean()) if on_prices.size > 0 else np.nan
+                return avg_on, uptime_frac, cutoff_used
+
+            # Helper: add-on uptime-aware (USD/MWh) usando giorni REALI del mese
+            def addon_usd_mwh_for_month(yy, mm, uptime_frac):
+                days_real = calendar.monthrange(yy, mm)[1]
+                presumed_kwh_eff = peak_kwh_month * float(days_real) * 24.0 * float(uptime_frac)
+                total_usd_peak_local = peak_kwh_month * peak_multiplier_usd
+                addon_usd_per_kwh = (total_usd_peak_local / presumed_kwh_eff) if presumed_kwh_eff > 0 else 0.0
+                return addon_usd_per_kwh * 1000.0
+
+            # Prepariamo dati base (serve interval_cols)
+            interval_cols = [c for c in df_all.columns if isinstance(c, int)]
+            interval_cols = sorted([c for c in interval_cols if 1 <= c <= 100])
+            if not interval_cols:
+                st.warning("Non trovo le colonne 15-min (1..100).")
+                st.stop()
+
+            # Anni disponibili per ogni mese (per stimato/tendenza)
+            df_all["year"] = df_all["date"].dt.year
+            df_all["month"] = df_all["date"].dt.month
+
+            def monthly_valid_prices_for_year(yy, mm):
+                dfx = df_all[(df_all["year"] == yy) & (df_all["month"] == mm)].copy()
+                if dfx.empty:
+                    return np.array([], dtype=float)
+
+                prices = dfx[interval_cols].to_numpy(dtype=float)
+                intervals = dfx["Intervals"].fillna(96).astype(int).to_numpy()
+
+                idxs = np.arange(1, len(interval_cols) + 1)
+                valid_mask = idxs[None, :] <= intervals[:, None]
+
+                valid_prices = prices[valid_mask]
+                valid_prices = valid_prices[np.isfinite(valid_prices)]
+                return valid_prices
+
+            # 1) Costruiamo serie "reale" per mesi passati (se dati presenti)
+            # 2) Serie "stimato" per mesi futuri (media storico ON-only sugli ultimi N anni disponibili)
+            # 3) Serie "tendenza" per mesi futuri (proiezione YoY sul mese)
+
+            actual_allin = []
+            est_allin = []
+            trend_allin = []
+
+            for (yy, mm) in months_axis:
+                is_past_or_t0 = (yy < t0_y) or (yy == t0_y and mm <= t0_m)
+                is_future = (yy > t0_y) or (yy == t0_y and mm > t0_m)
+
+                # ----- ACTUAL (solo se abbiamo dati per quel mese+anno)
+                if is_past_or_t0:
+                    vp = monthly_valid_prices_for_year(yy, mm)
+                    if vp.size > 0:
+                        avg_on, uptime_frac, _ = compute_on_stats(vp, mode, off_threshold_usd_mwh, uptime_pct_input)
+                        add_on = addon_usd_mwh_for_month(yy, mm, uptime_frac)
+                        actual_allin.append(avg_on + add_on if np.isfinite(avg_on) else np.nan)
+                    else:
+                        actual_allin.append(np.nan)
+                else:
+                    actual_allin.append(np.nan)
+
+                # ----- ESTIMATED FUTURE (media storico sugli ultimi N anni disponibili per quel mese)
+                if is_future:
+                    years_av = sorted(df_all.loc[df_all["month"] == mm, "year"].dropna().unique().tolist())
+                    # escludi anno futuro
+                    years_av = [y for y in years_av if y < yy] or years_av
+                    if len(years_av) == 0:
+                        est_allin.append(np.nan)
+                        trend_allin.append(np.nan)
+                        continue
+
+                    years_used_local = years_av[-min(n_years, len(years_av)) :]
+
+                    rows_tmp = []
+                    yoy_base = []  # per tendenza
+                    for yhist in years_used_local:
+                        vp_hist = monthly_valid_prices_for_year(yhist, mm)
+                        if vp_hist.size == 0:
+                            continue
+                        avg_on, uptime_frac, _ = compute_on_stats(vp_hist, mode, off_threshold_usd_mwh, uptime_pct_input)
+                        add_on = addon_usd_mwh_for_month(yy, mm, uptime_frac)  # add-on riferito al mese FUTURO (giorni reali futuri)
+                        allin = avg_on + add_on if np.isfinite(avg_on) else np.nan
+                        rows_tmp.append(allin)
+                        yoy_base.append(avg_on)  # trend sul solo RTM ON-only (poi aggiungo add-on medio)
+
+                    est_allin.append(float(np.nanmean(rows_tmp)) if len(rows_tmp) > 0 else np.nan)
+
+                    # ----- TREND FUTURE (YoY medio del mese applicato all'ultimo anno disponibile)
+                    # Calcolo YoY sul RTM ON-only (senza add-on), poi aggiungo add-on medio.
+                    if len(yoy_base) >= 2:
+                        # ricostruisco una serie ordinata per anno
+                        tmp = []
+                        for yhist in years_used_local:
+                            vp_hist = monthly_valid_prices_for_year(yhist, mm)
+                            if vp_hist.size == 0:
+                                continue
+                            avg_on, _, _ = compute_on_stats(vp_hist, mode, off_threshold_usd_mwh, uptime_pct_input)
+                            tmp.append((yhist, avg_on))
+                        tmp = [(a, b) for a, b in tmp if np.isfinite(b)]
+                        tmp.sort(key=lambda x: x[0])
+
+                        if len(tmp) >= 2:
+                            vals = [b for _, b in tmp]
+                            yrs = [a for a, _ in tmp]
+                            yoy = [vals[i] / vals[i - 1] - 1.0 for i in range(1, len(vals)) if vals[i - 1] != 0]
+                            yoy_avg = float(np.mean(yoy)) if len(yoy) > 0 else 0.0
+
+                            last_y = yrs[-1]
+                            last_p = vals[-1]
+
+                            # proiezione composta se yy è oltre last_y
+                            k = max(1, yy - last_y)
+                            projected = last_p * ((1.0 + yoy_avg) ** k)
+
+                            # add-on: uso add-on medio tra anni usati (uptime-aware calcolato su ciascun anno, ma riferito al mese futuro)
+                            add_on_list = []
+                            for yhist in years_used_local:
+                                vp_hist = monthly_valid_prices_for_year(yhist, mm)
+                                if vp_hist.size == 0:
+                                    continue
+                                _, uptime_frac, _ = compute_on_stats(vp_hist, mode, off_threshold_usd_mwh, uptime_pct_input)
+                                add_on_list.append(addon_usd_mwh_for_month(yy, mm, uptime_frac))
+                            add_on_avg = float(np.mean(add_on_list)) if len(add_on_list) > 0 else 0.0
+
+                            trend_allin.append(projected + add_on_avg)
+                        else:
+                            trend_allin.append(np.nan)
+                    else:
+                        trend_allin.append(np.nan)
+                else:
+                    est_allin.append(np.nan)
+                    trend_allin.append(np.nan)
+
+            # X axis labels (con evidenza T0)
+            x_labels = [month_label(yy, mm) for (yy, mm) in months_axis]
+
+            # -----------------------------
+            # Grafico 1: storico reale + FUTURO stimato
+            # -----------------------------
+            st.markdown("#### 📊 1) Timeline – Futuro stimato (media storico + add-on)")
+
+            fig1 = go.Figure()
+            fig1.add_bar(x=x_labels, y=actual_allin, name="Reale (se disponibile) – ALL-IN ON")
+            fig1.add_bar(x=x_labels, y=est_allin, name="Futuro stimato – ALL-IN ON")
+
+            # Linea verticale T0 (mese corrente)
+            t0_label = month_label(t0_y, t0_m)
+            fig1.add_vline(x=t0_label, line_width=2, line_dash="dash")
+
+            fig1.update_layout(
+                barmode="group",
+                xaxis_title="Mese (T0 al centro)",
+                yaxis_title="Prezzo [USD/MWh]",
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig1, use_container_width=True)
+
+            # -----------------------------
+            # Grafico 2: storico reale + FUTURO in tendenza
+            # -----------------------------
+            st.markdown("#### 📈 2) Timeline – Futuro in tendenza (YoY mese + add-on)")
+
+            fig2 = go.Figure()
+            fig2.add_bar(x=x_labels, y=actual_allin, name="Reale (se disponibile) – ALL-IN ON")
+            fig2.add_bar(x=x_labels, y=trend_allin, name="Futuro tendenza – ALL-IN ON")
+
+            fig2.add_vline(x=t0_label, line_width=2, line_dash="dash")
+
+            fig2.update_layout(
+                barmode="group",
+                xaxis_title="Mese (T0 al centro)",
+                yaxis_title="Prezzo [USD/MWh]",
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig2, use_container_width=True)
