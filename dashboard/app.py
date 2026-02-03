@@ -519,6 +519,48 @@ def filter_by_date(df: pd.DataFrame, start_date: datetime.date, end_date: dateti
 
 
 
+
+def parse_gridmatic_csv(file) -> pd.DataFrame:
+    """Parsa un CSV Gridmatic con almeno le colonne: month, value_usd.
+
+    - Accetta month in formati tipici (es. '2025-11-01', '2025-11', '11/2025', ecc.)
+    - Normalizza month al primo giorno del mese (timestamp)
+    - Rimuove colonne inutili (es. 'Unnamed: 0') se presenti
+    - Aggrega eventuali mesi duplicati sommando value_usd
+    """
+    try:
+        df = pd.read_csv(file)
+
+        # Drop tipiche colonne indice
+        drop_cols = [c for c in df.columns if str(c).lower().startswith("unnamed")]
+        if drop_cols:
+            df = df.drop(columns=drop_cols)
+
+        if "month" not in df.columns or "value_usd" not in df.columns:
+            return pd.DataFrame(columns=["month", "value_usd"])
+
+        out = df[["month", "value_usd"]].copy()
+
+        out["month"] = pd.to_datetime(out["month"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+        out["value_usd"] = pd.to_numeric(out["value_usd"], errors="coerce")
+
+        out = out.dropna(subset=["month", "value_usd"])
+        if out.empty:
+            return pd.DataFrame(columns=["month", "value_usd"])
+
+        out = (
+            out.groupby("month", as_index=False)["value_usd"]
+            .sum()
+            .sort_values("month")
+            .reset_index(drop=True)
+        )
+
+        return out
+
+    except Exception:
+        return pd.DataFrame(columns=["month", "value_usd"])
+
+
 # -----------------------------
 # GRIDMATIC – ADJUSTMENT LAYER
 # -----------------------------
@@ -876,8 +918,15 @@ st.sidebar.subheader("7. Gridmatic")
 
 st.sidebar.caption(
     "Inserisci uno o più aggiustamenti mensili (USD) che modificano il costo elettrico finale. "
-    "Regola: il valore del mese selezionato vale dal 25 del mese precedente (incluso) al 25 del mese (escluso) "
-    "ed è spalmato uniformemente sui giorni del periodo. Valori negativi diminuiscono il costo, positivi lo aumentano."
+    # "Regola: il valore del mese selezionato vale dal 25 del mese precedente (incluso) al 25 del mese (escluso) "
+    # "ed è spalmato uniformemente sui giorni del periodo. Valori negativi diminuiscono il costo, positivi lo aumentano."
+)
+
+# --- Import CSV (opzionale) ---
+gridmatic_csv = st.sidebar.file_uploader(
+    "Carica CSV Gridmatic (colonne: month, value_usd)",
+    type=["csv"],
+    key="gridmatic_csv",
 )
 
 if "gridmatic_entries" not in st.session_state:
@@ -886,6 +935,39 @@ if "gridmatic_entries" not in st.session_state:
         [{"month": datetime.today().replace(day=1), "value_usd": 0.0}]
     )
 
+# Se l'utente carica un CSV, può importare (sovrascrivere o aggiungere)
+if gridmatic_csv is not None:
+    imported = parse_gridmatic_csv(gridmatic_csv)
+
+    if imported.empty:
+        st.sidebar.error("CSV Gridmatic non valido. Servono colonne 'month' e 'value_usd'.")
+    else:
+        st.sidebar.success(f"CSV Gridmatic letto: {len(imported)} righe")
+        with st.sidebar.expander("Anteprima CSV Gridmatic", expanded=False):
+            st.dataframe(imported, use_container_width=True)
+
+        c1, c2 = st.sidebar.columns(2)
+        if c1.button("Sovrascrivi da CSV", key="gridmatic_overwrite_btn"):
+            st.session_state["gridmatic_entries"] = imported.copy()
+
+        if c2.button("Aggiungi da CSV", key="gridmatic_append_btn"):
+            base = st.session_state["gridmatic_entries"].copy()
+            combined = pd.concat([base, imported], ignore_index=True)
+
+            # Normalizza mese al primo giorno e somma eventuali duplicati
+            combined["month"] = pd.to_datetime(combined["month"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+            combined["value_usd"] = pd.to_numeric(combined["value_usd"], errors="coerce")
+            combined = combined.dropna(subset=["month", "value_usd"])
+            if not combined.empty:
+                combined = (
+                    combined.groupby("month", as_index=False)["value_usd"]
+                    .sum()
+                    .sort_values("month")
+                    .reset_index(drop=True)
+                )
+            st.session_state["gridmatic_entries"] = combined
+
+# --- Editor manuale (sempre disponibile) ---
 gridmatic_entries = st.sidebar.data_editor(
     st.session_state["gridmatic_entries"],
     num_rows="dynamic",
@@ -897,7 +979,20 @@ gridmatic_entries = st.sidebar.data_editor(
     key="gridmatic_entries_editor",
 )
 
-# Salva in sessione (persistenza)
+# Salva in sessione (persistenza) + normalizzazione
+gridmatic_entries = gridmatic_entries.copy()
+gridmatic_entries["month"] = pd.to_datetime(gridmatic_entries["month"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+gridmatic_entries["value_usd"] = pd.to_numeric(gridmatic_entries["value_usd"], errors="coerce")
+gridmatic_entries = gridmatic_entries.dropna(subset=["month", "value_usd"])
+if not gridmatic_entries.empty:
+    # Se per errore l'utente inserisce due righe stesso mese, le sommiamo
+    gridmatic_entries = (
+        gridmatic_entries.groupby("month", as_index=False)["value_usd"]
+        .sum()
+        .sort_values("month")
+        .reset_index(drop=True)
+    )
+
 st.session_state["gridmatic_entries"] = gridmatic_entries
 
 # Applichiamo gli aggiustamenti al dataframe energia (Synota/Prometheus) se disponibile
