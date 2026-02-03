@@ -520,6 +520,131 @@ def filter_by_date(df: pd.DataFrame, start_date: datetime.date, end_date: dateti
 
 
 # -----------------------------
+# GRIDMATIC – ADJUSTMENT LAYER
+# -----------------------------
+def _month_shift(year: int, month: int, delta_months: int) -> tuple[int, int]:
+    """Shift a (year, month) by delta_months, returning (year, month)."""
+    m = month + delta_months
+    y = year
+    while m <= 0:
+        m += 12
+        y -= 1
+    while m > 12:
+        m -= 12
+        y += 1
+    return y, m
+
+
+def build_gridmatic_daily_adjustments(entries: pd.DataFrame) -> pd.DataFrame:
+    """Build a daily adjustment series from Gridmatic monthly entries.
+
+    Business rule:
+      - Each (month, value_usd) applies from the 25th of the previous month (inclusive)
+        to the 25th of the selected month (exclusive).
+      - The value is spread evenly across the days in that window:
+          daily = value_usd / number_of_days_in_window
+      - Multiple months can overlap; adjustments are summed per day.
+    """
+    if entries is None or entries.empty:
+        return pd.DataFrame(columns=["date", "gridmatic_adj_usd"])
+
+    df = entries.copy()
+
+    # Normalize columns
+    if "month" not in df.columns or "value_usd" not in df.columns:
+        return pd.DataFrame(columns=["date", "gridmatic_adj_usd"])
+
+    df["month"] = pd.to_datetime(df["month"], errors="coerce").dt.normalize()
+    df["value_usd"] = pd.to_numeric(df["value_usd"], errors="coerce")
+
+    df = df.dropna(subset=["month", "value_usd"]).copy()
+    if df.empty:
+        return pd.DataFrame(columns=["date", "gridmatic_adj_usd"])
+
+    rows = []
+    for _, r in df.iterrows():
+        month_dt: pd.Timestamp = r["month"]
+        value = float(r["value_usd"])
+
+        y = int(month_dt.year)
+        m = int(month_dt.month)
+
+        py, pm = _month_shift(y, m, -1)
+
+        start = datetime(py, pm, 25)
+        end = datetime(y, m, 25)  # exclusive
+
+        days = (end - start).days
+        if days <= 0:
+            continue
+
+        daily = value / days
+
+        # Build daily date range [start, end)
+        for d in pd.date_range(start=start, end=end - timedelta(days=1), freq="D"):
+            rows.append({"date": pd.to_datetime(d).normalize(), "gridmatic_adj_usd": daily})
+
+    if not rows:
+        return pd.DataFrame(columns=["date", "gridmatic_adj_usd"])
+
+    adj = pd.DataFrame(rows)
+    adj = adj.groupby("date", as_index=False)["gridmatic_adj_usd"].sum()
+    return adj.sort_values("date")
+
+
+def apply_gridmatic_adjustments(energy_df: pd.DataFrame, gridmatic_entries: pd.DataFrame) -> pd.DataFrame:
+    """Apply Gridmatic daily adjustments to an energy dataframe (Synota/Prometheus-compatible).
+
+    - Preserves original invoice_amount_usd in 'invoice_amount_usd_original' (if present)
+    - Writes adjusted cost back into 'invoice_amount_usd'
+    - Recomputes effective_rate_usd_per_mwh if possible
+    """
+    if energy_df is None or energy_df.empty:
+        return energy_df
+
+    if "invoice_amount_usd" not in energy_df.columns:
+        return energy_df
+
+    adj = build_gridmatic_daily_adjustments(gridmatic_entries)
+    if adj.empty:
+        # Still ensure original column exists (for debugging)
+        if "invoice_amount_usd_original" not in energy_df.columns:
+            out = energy_df.copy()
+            out["invoice_amount_usd_original"] = out["invoice_amount_usd"]
+            out["gridmatic_adj_usd"] = 0.0
+            return out
+        return energy_df
+
+    out = energy_df.copy()
+    if "invoice_amount_usd_original" not in out.columns:
+        out["invoice_amount_usd_original"] = out["invoice_amount_usd"]
+
+    # Re-base to the original invoice before applying adjustments (avoids double counting on reruns)
+    out["invoice_amount_usd"] = out["invoice_amount_usd_original"]
+
+    out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.normalize()
+    out = out.merge(adj, on="date", how="left")
+    out["gridmatic_adj_usd"] = out["gridmatic_adj_usd"].fillna(0.0)
+
+    # Adjust invoice
+    out["invoice_amount_usd"] = out["invoice_amount_usd"].astype(float) + out["gridmatic_adj_usd"].astype(float)
+
+    # Recompute effective rate where possible
+    if "energy_mwh" in out.columns:
+        out["effective_rate_usd_per_mwh"] = out.apply(
+            lambda r: (r["invoice_amount_usd"] / r["energy_mwh"])
+            if pd.notna(r.get("invoice_amount_usd")) and pd.notna(r.get("energy_mwh")) and r["energy_mwh"] and r["energy_mwh"] > 0
+            else r.get("effective_rate_usd_per_mwh"),
+            axis=1,
+        )
+
+    return out.sort_values("date")
+
+
+
+
+
+# -----------------------------
 # SIDEBAR: CARICAMENTO & FILTRI
 # -----------------------------
 st.sidebar.title("⚙️ Configurazione")
@@ -743,6 +868,43 @@ if hosting_files:
         hosting_df_all = hosting_df_all.sort_values("date")
 
 
+
+
+
+# 7. Gridmatic (adjustment su costo elettrico)
+st.sidebar.subheader("7. Gridmatic")
+
+st.sidebar.caption(
+    "Inserisci uno o più aggiustamenti mensili (USD) che modificano il costo elettrico finale. "
+    "Regola: il valore del mese selezionato vale dal 25 del mese precedente (incluso) al 25 del mese (escluso) "
+    "ed è spalmato uniformemente sui giorni del periodo. Valori negativi diminuiscono il costo, positivi lo aumentano."
+)
+
+if "gridmatic_entries" not in st.session_state:
+    # Default: una riga vuota sul mese corrente
+    st.session_state["gridmatic_entries"] = pd.DataFrame(
+        [{"month": datetime.today().replace(day=1), "value_usd": 0.0}]
+    )
+
+gridmatic_entries = st.sidebar.data_editor(
+    st.session_state["gridmatic_entries"],
+    num_rows="dynamic",
+    use_container_width=True,
+    column_config={
+        "month": st.column_config.DateColumn("Mese (seleziona un giorno del mese)", format="YYYY-MM-DD"),
+        "value_usd": st.column_config.NumberColumn("Valore [USD] (+/-)", step=100.0, format="%.2f"),
+    },
+    key="gridmatic_entries_editor",
+)
+
+# Salva in sessione (persistenza)
+st.session_state["gridmatic_entries"] = gridmatic_entries
+
+# Applichiamo gli aggiustamenti al dataframe energia (Synota/Prometheus) se disponibile
+if synota_df is not None and not synota_df.empty:
+    synota_df = apply_gridmatic_adjustments(synota_df, gridmatic_entries)
+
+
 # 6. Range date globale (Synota / Antpool / ERCOT)
 if synota_df is not None or antpool_df is not None or ercot_df is not None or rtm_prices_df is not None:
     all_dates = []
@@ -758,7 +920,7 @@ if synota_df is not None or antpool_df is not None or ercot_df is not None or rt
     min_date = min(all_dates).date()
     max_date = max(all_dates).date()
 
-    st.sidebar.subheader("7. Filtro timeframe")
+    st.sidebar.subheader("9. Filtro timeframe")
 
     # 👇 Preset rapidi
     preset = st.sidebar.radio(
