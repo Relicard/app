@@ -404,6 +404,7 @@ def get_btc_price_from_api() -> float | None:
 
 
 DESMO_WALLET_ADDRESS = "bc1qtu7w3e67xwudtv6ddq4ru9ppw9p63dnd3jph2q"
+DESMO_WALLET_ADDRESS2 = "bc1qrr39z9qnpfpnxq5dfv9nyx3yjc24tey3xvvhq6"
 KRAKEN_DEPOSIT_ADDRESS = "36dHd14U5a8F2yckQC6cadR1HSUbWwUr5c"
 
 
@@ -2714,7 +2715,10 @@ with tab9:
 
             btc_theoretical_balance = btc_mined_desmo - sel_btc_sold
 
-            wallet_balance_btc = get_wallet_balance_btc(DESMO_WALLET_ADDRESS)
+            wallet_balance_btc1 = get_wallet_balance_btc(DESMO_WALLET_ADDRESS)
+            wallet_balance_btc2 = get_wallet_balance_btc(DESMO_WALLET_ADDRESS2)
+
+            wallet_balance_btc = wallet_balance_btc1 + wallet_balance_btc2
 
             colw1, colw2, colw3,colw4 = st.columns(4)
             with colw1:
@@ -3456,6 +3460,102 @@ with tab1:
                     f"{total_hosting_revenue_all:,.2f}",
                 )
 
+# =========================
+# 8) TABELLA MENSILE (P&L) – Overview & Trends
+# =========================
+st.markdown("---")
+st.subheader("📅 Overview mensile (P&L)")
+
+# Nota: usiamo combined_ov (già costruito sopra) perché contiene:
+# - total_earnings_btc (DESMO mined)
+# - earnings_usd (valorizzazione mining con BTC price giornaliero o fallback)
+# - hosting_revenue_usd (ricavi hosting stimati)
+# - invoice_amount_usd (costo elettrico totale, già con eventuali adjustment Gridmatic)
+
+if "combined_ov" not in locals() or combined_ov is None or combined_ov.empty:
+    st.info("Dati insufficienti per calcolare la tabella mensile (servono giorni in comune tra Synota e Antpool).")
+else:
+    monthly = combined_ov.copy()
+    monthly["month"] = pd.to_datetime(monthly["date"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+
+    # Aggregazione mensile
+    monthly_agg = (
+        monthly.groupby("month", as_index=False)
+        .agg(
+            mined_btc_desmo=("total_earnings_btc", "sum"),
+            mining_usd=("earnings_usd", "sum"),
+            hosting_clients_usd=("hosting_revenue_usd", "sum"),
+            electric_cost_total_usd=("invoice_amount_usd", "sum"),
+        )
+        .sort_values("month")
+        .reset_index(drop=True)
+    )
+
+    # Profit / Loss (USD): mining USD + hosting USD - costi elettrici totali
+    monthly_agg["profit_loss_usd"] = (
+        monthly_agg["mining_usd"]
+        + monthly_agg["hosting_clients_usd"]
+        - monthly_agg["electric_cost_total_usd"]
+    )
+
+    # Colonna mese formattata
+    monthly_agg["month_label"] = monthly_agg["month"].dt.strftime("%Y-%m")
+
+    # Output: 5 colonne richieste
+    out = monthly_agg[
+        [
+            "month_label",
+            "mined_btc_desmo",
+            "hosting_clients_usd",
+            "electric_cost_total_usd",
+            "profit_loss_usd",
+        ]
+    ].rename(
+        columns={
+            "month_label": "Mese",
+            "mined_btc_desmo": "Minato DESMO [BTC]",
+            "hosting_clients_usd": "Hosting clienti [USD]",
+            "electric_cost_total_usd": "Costi elettrici totali [USD]",
+            "profit_loss_usd": "Profitto / perdita [USD]",
+        }
+    )
+
+    # Totale periodo (opzionale ma utile)
+    total_row = pd.DataFrame(
+        [{
+            "Mese": "TOTALE",
+            "Minato DESMO [BTC]": out["Minato DESMO [BTC]"].sum(),
+            "Hosting clienti [USD]": out["Hosting clienti [USD]"].sum(),
+            "Costi elettrici totali [USD]": out["Costi elettrici totali [USD]"].sum(),
+            "Profitto / perdita [USD]": out["Profitto / perdita [USD]"].sum(),
+        }]
+    )
+    out_tot = pd.concat([out, total_row], ignore_index=True)
+
+    st.dataframe(
+        out_tot.style.format(
+            {
+                "Minato DESMO [BTC]": "{:,.6f}",
+                "Hosting clienti [USD]": "{:,.2f}",
+                "Costi elettrici totali [USD]": "{:,.2f}",
+                "Profitto / perdita [USD]": "{:,.2f}",
+            }
+        ),
+        use_container_width=True,
+    )
+
+    # Download CSV (comodo)
+    csv_bytes = out.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "⬇️ Scarica tabella mensile (CSV)",
+        data=csv_bytes,
+        file_name="desmo_monthly_overview.csv",
+        mime="text/csv",
+    )
+
+
+
+
 # -----------------------------
 # TAB 2 – CHARTS OVERVIEW
 # -----------------------------
@@ -3871,8 +3971,13 @@ with tab2:
             btc_sold_auto = float(st.session_state.get("btc_sold_matched", 0.0))
 
             # Saldo on-chain del wallet DESMO
-            wallet_balance_btc_ch = get_wallet_balance_btc(DESMO_WALLET_ADDRESS)
+            wallet_balance_btc_ch1 = get_wallet_balance_btc(DESMO_WALLET_ADDRESS)
+            wallet_balance_btc_ch2 = get_wallet_balance_btc(DESMO_WALLET_ADDRESS2)
+
+            wallet_balance_btc_ch = wallet_balance_btc_ch1 + wallet_balance_btc_ch2
             
+            btc_sold_auto = btc_desmo_total_ch - wallet_balance_btc_ch
+        
             values_btc = [
                 btc_desmo_total_ch,
                 btc_sold_auto,
