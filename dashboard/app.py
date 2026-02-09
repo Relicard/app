@@ -217,15 +217,93 @@ def parse_prometheus_usage(file) -> pd.DataFrame:
 
 
 def parse_antpool_csv(file) -> pd.DataFrame:
-    """Parsa il CSV Antpool con i campi: Earnings date, Daily hashrate, Total Earnings."""
+    """Parsa un CSV Antpool con i campi tipici:
+    - Earnings date
+    - Daily hashrate
+    - Total Earnings
+
+    Output standardizzato (giornaliero):
+      - date (datetime normalizzato a giorno)
+      - daily_hashrate_ths (float)
+      - total_earnings_btc (float)
+    """
     df = pd.read_csv(file)
 
-    df["date"] = pd.to_datetime(df["Earnings date"])
-    df["daily_hashrate_ths"] = df["Daily hashrate"]
-    df["total_earnings_btc"] = df["Total Earnings"]
+    if "Earnings date" not in df.columns:
+        return pd.DataFrame(columns=["date", "daily_hashrate_ths", "total_earnings_btc"])
 
-    df = df.sort_values("date")
+    # Date -> giorno (naive)
+    df["date"] = pd.to_datetime(df["Earnings date"], errors="coerce").dt.normalize()
+
+    # Numerici robusti (accetta anche stringhe con virgole)
+    def _to_num(s):
+        if isinstance(s, str):
+            s = s.replace(",", "").strip()
+        return pd.to_numeric(s, errors="coerce")
+
+    if "Daily hashrate" in df.columns:
+        df["daily_hashrate_ths"] = df["Daily hashrate"].map(_to_num)
+    else:
+        df["daily_hashrate_ths"] = np.nan
+
+    if "Total Earnings" in df.columns:
+        df["total_earnings_btc"] = df["Total Earnings"].map(_to_num)
+    else:
+        df["total_earnings_btc"] = np.nan
+
+    df = df.dropna(subset=["date"]).copy()
+
+    # Se Antpool esporta più righe per lo stesso giorno, sommiamo (hashrate + earnings)
+    df = (
+        df.groupby("date", as_index=False)
+        .agg(
+            daily_hashrate_ths=("daily_hashrate_ths", "sum"),
+            total_earnings_btc=("total_earnings_btc", "sum"),
+        )
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
     return df
+
+
+def load_antpool_files(files) -> pd.DataFrame:
+    """Carica 1+ CSV Antpool e somma i valori sulle stesse date.
+
+    - Concat dei file
+    - Aggregazione per data: somma hashrate + earnings
+    """
+    if not files:
+        return None
+
+    frames = []
+    for f in files:
+        df_one = parse_antpool_csv(f)
+        if df_one is None or df_one.empty:
+            continue
+        # opzionale: traccia sorgente (utile per debug)
+        try:
+            df_one["source_file"] = getattr(f, "name", "antpool.csv")
+        except Exception:
+            df_one["source_file"] = "antpool.csv"
+        frames.append(df_one)
+
+    if not frames:
+        return pd.DataFrame(columns=["date", "daily_hashrate_ths", "total_earnings_btc"])
+
+    all_df = pd.concat(frames, ignore_index=True)
+
+    # Aggrega definitivamente (se stessi giorni presenti in file diversi)
+    out = (
+        all_df.groupby("date", as_index=False)
+        .agg(
+            daily_hashrate_ths=("daily_hashrate_ths", "sum"),
+            total_earnings_btc=("total_earnings_btc", "sum"),
+        )
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+
+    return out
 
 
 def parse_btc_price_csv(file) -> pd.DataFrame:
@@ -710,7 +788,12 @@ prometheus_file = st.sidebar.file_uploader(
     type=["csv"],
     key="prometheus",
 )
-antpool_file = st.sidebar.file_uploader("Antpool CSV (hashrate/ricavi)", type=["csv"], key="antpool")
+antpool_files = st.sidebar.file_uploader(
+    "Antpool CSV (hashrate/ricavi) — carica 1 o più file",
+    type=["csv"],
+    accept_multiple_files=True,
+    key="antpool",
+)
 
 # Dataframe base
 synota_df = None
@@ -723,8 +806,8 @@ if synota_file is not None:
 if prometheus_file is not None:
     prometheus_df = parse_prometheus_usage(prometheus_file)
 
-if antpool_file is not None:
-    antpool_df = parse_antpool_csv(antpool_file)
+if antpool_files:
+    antpool_df = load_antpool_files(antpool_files)
 
 # Dataframe di energia effettivamente usato nel resto dell’app
 energia_source_label = data_source  # "Synota" oppure "Prometheus"
