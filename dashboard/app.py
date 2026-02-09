@@ -60,86 +60,6 @@ def parse_synota_csv(file) -> pd.DataFrame:
 
     df = df.sort_values("date")
     return df
-
-
-import csv
-import io
-
-def parse_chase_activity_csv(file) -> pd.DataFrame:
-    """
-    Parsa l'estratto conto Chase 'Activity' (CSV).
-    Output standardizzato:
-      - date (datetime normalizzato a giorno)
-      - description (str)
-      - amount (float, positivo per CREDIT e negativo per DEBIT)
-      - direction ("DEBIT"/"CREDIT")
-      - raw_type (colonna Type se presente)
-    """
-    # Streamlit uploader -> file-like. Lo leggiamo come testo.
-    raw = file.getvalue()
-    if isinstance(raw, bytes):
-        text = raw.decode("utf-8", errors="ignore")
-    else:
-        text = str(raw)
-
-    f = io.StringIO(text)
-    reader = csv.reader(f)
-    rows = list(reader)
-    if not rows:
-        return pd.DataFrame()
-
-    header = rows[0]
-    data_rows = rows[1:]
-
-    # Chase spesso mette più colonne del header (colonne vuote in coda).
-    max_len = max(len(r) for r in data_rows) if data_rows else len(header)
-    if len(header) < max_len:
-        header = header + [f"extra_{i}" for i in range(max_len - len(header))]
-
-    # normalizza righe a max_len
-    fixed = []
-    for r in data_rows:
-        if len(r) < max_len:
-            r = r + [""] * (max_len - len(r))
-        fixed.append(r[:max_len])
-
-    df = pd.DataFrame(fixed, columns=header)
-
-    # Colonne attese (possono variare leggermente)
-    # Tipico: Details, Posting Date, Description, Amount, Type, Balance, Check or Slip #
-    if "Posting Date" not in df.columns or "Amount" not in df.columns:
-        return pd.DataFrame()
-
-    df["date"] = pd.to_datetime(df["Posting Date"], format="%m/%d/%Y", errors="coerce").dt.normalize()
-    df["description"] = df["Description"].astype(str).str.strip()
-
-    # Amount -> float
-    df["amount"] = pd.to_numeric(df["Amount"].astype(str).str.replace(",", ""), errors="coerce")
-
-    # Details indica DEBIT/CREDIT
-    if "Details" in df.columns:
-        df["direction"] = df["Details"].astype(str).str.strip().str.upper()
-    else:
-        df["direction"] = np.where(df["amount"] < 0, "DEBIT", "CREDIT")
-
-    df["raw_type"] = df["Type"].astype(str).str.strip() if "Type" in df.columns else ""
-
-    # pulizia base
-    df = df.dropna(subset=["date", "amount"]).copy()
-    df = df.sort_values("date")
-
-    # Standardizziamo: DEBIT negativo, CREDIT positivo
-    # (in questo CSV sembra già così, ma lo rendiamo certo)
-    df.loc[df["direction"].str.contains("DEBIT", na=False), "amount"] = -df.loc[
-        df["direction"].str.contains("DEBIT", na=False), "amount"
-    ].abs()
-    df.loc[df["direction"].str.contains("CREDIT", na=False), "amount"] = df.loc[
-        df["direction"].str.contains("CREDIT", na=False), "amount"
-    ].abs()
-
-    return df[["date", "description", "amount", "direction", "raw_type"]]
-
-
 def parse_prometheus_usage(file) -> pd.DataFrame:
     """
     Parsa il CSV di Prometheus (Hourly Energy Usage and Cost).
@@ -849,26 +769,6 @@ if ercot_file is not None:
     ercot_df = parse_ercot_price_csv(ercot_file)
     
 
-st.sidebar.subheader("8. Estratto conto (riconciliazione)")
-
-bank_file = st.sidebar.file_uploader(
-    "Chase Activity CSV (bank statement)",
-    type=["csv"],
-    key="chase_activity",
-)
-
-bank_df = None
-if bank_file is not None:
-    bank_df = parse_chase_activity_csv(bank_file)
-    if bank_df is not None and not bank_df.empty:
-        st.sidebar.success(
-            f"Estratto conto caricato: {bank_df['date'].min().date()} → {bank_df['date'].max().date()}"
-        )
-    else:
-        st.sidebar.error("CSV Chase non valido o vuoto.")
-
-
-# 3b. Prezzi RTM (Prometheus extract - Excel)
 st.sidebar.subheader("3b. Prezzi RTM (Prometheus extract)")
 
 rtm_prices_df = None
@@ -1246,7 +1146,7 @@ else:
 # -----------------------------
 # TABS PRINCIPALI
 # -----------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs(
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(
     [
         "📌 Overview & Trends",
         "📊 Charts",
@@ -1255,12 +1155,10 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
         "🤝 Hosting",
         "🧠 Smart Analytics",
         "📈 Metriche globali",
-        "🔗 Combined View",
         "💰 Vendite BTC",
         "⚡ Prezzi ERCOT LZ_WEST",
         "⚡ Prometheus (dettaglio)",
         "⚡ RTM Prices (Zones/Hubs)",
-        "🧾 Riconciliazione pagamento elettrico",
     ]
 )
 
@@ -1864,241 +1762,11 @@ with tab4:
 
 
 
-# -----------------------------
-# TAB 7 – COMBINED VIEW
-# -----------------------------
-with tab7:
-    st.header("🔗 Vista combinata energia vs ricavi")
-
-    if synota_filtered is None or synota_filtered.empty or antpool_filtered is None or antpool_filtered.empty:
-        st.warning("Servono **entrambi** i CSV (Synota + Antpool) con date sovrapposte.")
-    else:
-        combined = pd.merge(
-            synota_filtered,
-            antpool_filtered,
-            on="date",
-            how="inner",
-            suffixes=("_synota", "_antpool"),
-        )
-
-        if combined.empty:
-            st.warning("Nessun giorno in cui Synota e Antpool hanno entrambi dati (dopo il filtro date).")
-        else:
-            # Applica prezzo BTC per giorno (CSV + fallback)
-            if btc_price_df is not None and not btc_price_df.empty:
-                combined = combined.merge(btc_price_df, on="date", how="left")
-                fallback_price = btc_price_used if btc_price_used else 0.0
-                combined["btc_price_usd"] = combined["btc_price_usd"].fillna(fallback_price)
-            else:
-                fallback_price = btc_price_used if btc_price_used else 0.0
-                combined["btc_price_usd"] = fallback_price
-
-            # Ricavi DESMO da mining (self-mining)
-            combined["earnings_usd"] = combined["total_earnings_btc"] * combined["btc_price_usd"]
-
-            # -----------------------------
-            # Ricavi DESMO da hosting (per giorno)
-            # -----------------------------
-            if hosting_filtered is not None and not hosting_filtered.empty:
-                ASIC_TH = 200.0
-                ASIC_KW = 3.5
-                HOURS_PER_DAY = 24.0
-
-                hf = hosting_filtered.copy()
-                hf["asic_equivalent"] = hf["daily_hashrate_ths"] / ASIC_TH
-                hf["energy_kwh"] = hf["asic_equivalent"] * ASIC_KW * HOURS_PER_DAY
-                hf["hosting_revenue_usd"] = hf["energy_kwh"] * hosting_price_per_kwh
-
-                hosting_daily = hf.groupby("date", as_index=False)["hosting_revenue_usd"].sum()
-                combined = combined.merge(hosting_daily, on="date", how="left")
-                combined["hosting_revenue_usd"] = combined["hosting_revenue_usd"].fillna(0.0)
-            else:
-                combined["hosting_revenue_usd"] = 0.0
-
-            # Profitto / perdita giornaliero DESMO:
-            # mining USD + hosting USD - costo energia
-            combined["daily_profit_usd"] = (
-                combined["earnings_usd"] + combined["hosting_revenue_usd"] - combined["invoice_amount_usd"]
-            )
-
-            # Metriche base (sul periodo)
-            total_mwh_c = combined["energy_mwh"].sum()
-            total_cost_c = combined["invoice_amount_usd"].sum()
-            total_btc_c = combined["total_earnings_btc"].sum()
-
-            total_rev_mining_usd_c = combined["earnings_usd"].sum()
-            total_hosting_rev_c = combined["hosting_revenue_usd"].sum()
-            total_rev_usd_c = total_rev_mining_usd_c + total_hosting_rev_c
-
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Energia totale [MWh]", f"{total_mwh_c:,.2f}")
-            with col2:
-                st.metric("Costo totale energia [USD]", f"{total_cost_c:,.2f}")
-            with col3:
-                st.metric("BTC totali minati", f"{total_btc_c:.6f}")
-            with col4:
-                st.metric("Ricavi totali [USD]", f"{total_rev_usd_c:,.2f}")
-
-            st.caption(f"Di cui ricavi hosting: {total_hosting_rev_c:,.2f} USD")
-
-            # Metriche avanzate
-            st.markdown("### 📌 Metriche chiave")
-            colA, colB, colC = st.columns(3)
-
-            with colA:
-                # Costo medio $/MWh (pesato)
-                avg_rate_c = total_cost_c / total_mwh_c if total_mwh_c > 0 else None
-                st.write("**Costo medio energia [USD/MWh]**")
-                st.write(f"{avg_rate_c:,.2f}" if avg_rate_c else "N/A")
-
-            with colB:
-                # Costo per BTC
-                cost_per_btc = total_cost_c / total_btc_c if total_btc_c > 0 else None
-                st.write("**Costo energia per 1 BTC [USD/BTC]**")
-                st.write(f"{cost_per_btc:,.2f}" if cost_per_btc else "N/A")
-
-            with colC:
-                profit_usd = total_rev_usd_c - total_cost_c
-                st.write("**Margine lordo totale [USD]**")
-                st.write(f"{profit_usd:,.2f}")
-
-            st.markdown("### 📉 Grafico combinato (Costi vs Ricavi)")
-
-            show_cost = st.checkbox("Mostra costo energia [USD]", value=True, key="comb_cost")
-            show_rev = st.checkbox("Mostra ricavi [USD]", value=True, key="comb_rev")
-            show_rate_mwh = st.checkbox("Mostra $/MWh", value=True, key="comb_rate")
-            show_btc_day = st.checkbox("Mostra BTC/day", value=False, key="comb_btcday")
-
-            fig3 = go.Figure()
-
-            # 🔹 Barre: ricavi (mining + hosting) vs costo energia
-            if show_rev:
-                # Ricavi mining – parte bassa della colonna "Ricavi"
-                fig3.add_bar(
-                    x=combined["date"],
-                    y=combined["earnings_usd"],
-                    name="Ricavi mining [USD]",
-                    offsetgroup="ricavi",       # gruppo "ricavi" (colonna di sinistra)
-                    legendgroup="ricavi",
-                    marker_color="green",
-                )
-
-                # Ricavi hosting – parte alta della stessa colonna "Ricavi"
-                fig3.add_bar(
-                    x=combined["date"],
-                    y=combined["hosting_revenue_usd"],
-                    name="Ricavi hosting [USD]",
-                    offsetgroup="ricavi",       # stesso gruppo → si stacka sulla colonna "ricavi"
-                    legendgroup="ricavi",
-                    marker_color="blue",
-                )
-
-            if show_cost:
-                # Costo energia – colonna a sé affiancata ai ricavi
-                fig3.add_bar(
-                    x=combined["date"],
-                    y=combined["invoice_amount_usd"],
-                    name="Costo energia [USD]",
-                    offsetgroup="costo",        # gruppo "costo" → seconda colonna
-                    legendgroup="costo",
-                    marker_color="red",
-                )
-
-            # 🔹 Linea: tariffa e BTC/day sull’asse destro
-            if show_rate_mwh:
-                fig3.add_scatter(
-                    x=combined["date"],
-                    y=combined["effective_rate_usd_per_mwh"],
-                    name="Tariffa [USD/MWh]",
-                    mode="lines+markers",
-                    yaxis="y2",
-                    marker_color="white",
-                )
-
-            if show_btc_day:
-                fig3.add_scatter(
-                    x=combined["date"],
-                    y=combined["total_earnings_btc"],
-                    name="BTC/day",
-                    mode="lines+markers",
-                    yaxis="y2",
-                )
-
-            fig3.update_layout(
-                # relative/stack: mining + hosting si stackano,
-                # ma il gruppo "ricavi" rimane affiancato al gruppo "costo"
-                barmode="relative",
-                xaxis_title="Data",
-                yaxis=dict(title="USD (Costi / Ricavi)"),
-                yaxis2=dict(
-                    title="Tariffa [USD/MWh] / BTC/day",
-                    overlaying="y",
-                    side="right",
-                ),
-                hovermode="x unified",
-            )
-
-            st.plotly_chart(fig3, use_container_width=True)
-
-
-            st.markdown("### 📄 Dati combinati (per giorno)")
-            show_cols = [
-                "date",
-                "energy_mwh",
-                "invoice_amount_usd",
-                "effective_rate_usd_per_mwh",
-                "daily_hashrate_ths",
-                "total_earnings_btc",
-                "btc_price_usd",
-                "earnings_usd",
-                "hosting_revenue_usd",
-                "daily_profit_usd",
-            ]
-            st.dataframe(
-                combined[show_cols].rename(
-                    columns={
-                        "date": "Date",
-                        "energy_mwh": "Energy [MWh]",
-                        "invoice_amount_usd": "Energy cost [USD]",
-                        "effective_rate_usd_per_mwh": "Rate [USD/MWh]",
-                        "daily_hashrate_ths": "Hashrate [TH/s]",
-                        "total_earnings_btc": "Earnings [BTC]",
-                        "btc_price_usd": "BTC price [USD]",
-                        "earnings_usd": "Mining revenue [USD]",
-                        "hosting_revenue_usd": "Hosting revenue [USD]",
-                        "daily_profit_usd": "Daily profit [USD] (mining + hosting - energy)",
-                    }
-                ),
-                use_container_width=True,
-            )
-
-            # Grafico profitto / perdita giornaliero
-            st.markdown("### 📈 Profitto / perdita giornaliero (mining + hosting)")
-            fig_profit = go.Figure()
-            fig_profit.add_bar(
-                x=combined["date"],
-                y=combined["daily_profit_usd"],
-                name="Profitto giornaliero [USD]",
-            )
-            fig_profit.update_layout(
-                xaxis_title="Data",
-                yaxis_title="Profitto / Perdita [USD]",
-                hovermode="x unified",
-            )
-            st.plotly_chart(fig_profit, use_container_width=True)
-
-            # Profitto medio giornaliero sul periodo
-            avg_daily_profit = combined["daily_profit_usd"].mean()
-            st.markdown("### 💰 Profitto medio giornaliero")
-            st.metric("Profitto medio giornaliero [USD]", f"{avg_daily_profit:,.2f}")
-
-
 
 # -----------------------------
 # TAB 8 – METRICHE GLOBALI
 # -----------------------------
-with tab8:
+with tab7:
     st.header("📈 Metriche globali riassuntive")
 
     # Energia (Synota)
@@ -2606,7 +2274,7 @@ with tab6:
 # --------------------------------------------------------------------
 # TAB 9 – VENDITE BTC / KRAKEN  (AGGIORNATA COME RICHIESTO)
 # --------------------------------------------------------------------
-with tab9:
+with tab8:
     st.header("💰 Vendite BTC – Kraken & wallet DESMO")
 
     if kraken_filtered is None or kraken_filtered.empty:
@@ -3542,7 +3210,6 @@ with tab1:
                     "Ricavi da hosting [USD]",
                     f"{total_hosting_revenue_all:,.2f}",
                 )
-
 # =========================
 # 8) TABELLA MENSILE (P&L) – Overview & Trends
 # =========================
@@ -3569,6 +3236,7 @@ else:
             mining_usd=("earnings_usd", "sum"),
             hosting_clients_usd=("hosting_revenue_usd", "sum"),
             electric_cost_total_usd=("invoice_amount_usd", "sum"),
+            energy_mwh_total=("energy_mwh", "sum"),
         )
         .sort_values("month")
         .reset_index(drop=True)
@@ -3579,6 +3247,14 @@ else:
         monthly_agg["mining_usd"]
         + monthly_agg["hosting_clients_usd"]
         - monthly_agg["electric_cost_total_usd"]
+    )
+    
+    # Costo medio energia mensile [USD/MWh] = costi elettrici / MWh
+    monthly_agg["avg_energy_cost_usd_per_mwh"] = monthly_agg.apply(
+        lambda r: (r["electric_cost_total_usd"] / r["energy_mwh_total"])
+        if pd.notna(r.get("energy_mwh_total")) and r["energy_mwh_total"] and r["energy_mwh_total"] > 0
+        else 0.0,
+        axis=1,
     )
 
     # Colonna mese formattata
@@ -3591,6 +3267,7 @@ else:
             "mined_btc_desmo",
             "hosting_clients_usd",
             "electric_cost_total_usd",
+            "avg_energy_cost_usd_per_mwh",
             "profit_loss_usd",
         ]
     ].rename(
@@ -3599,6 +3276,7 @@ else:
             "mined_btc_desmo": "Minato DESMO [BTC]",
             "hosting_clients_usd": "Hosting clienti [USD]",
             "electric_cost_total_usd": "Costi elettrici totali [USD]",
+            "avg_energy_cost_usd_per_mwh": "Costo medio energia [USD/MWh]",
             "profit_loss_usd": "Profitto / perdita [USD]",
         }
     )
@@ -3610,6 +3288,11 @@ else:
             "Minato DESMO [BTC]": out["Minato DESMO [BTC]"].sum(),
             "Hosting clienti [USD]": out["Hosting clienti [USD]"].sum(),
             "Costi elettrici totali [USD]": out["Costi elettrici totali [USD]"].sum(),
+            "Costo medio energia [USD/MWh]": (
+                (out["Costi elettrici totali [USD]"].sum() / monthly_agg["energy_mwh_total"].sum())
+                if "energy_mwh_total" in monthly_agg.columns and monthly_agg["energy_mwh_total"].sum() > 0
+                else 0.0
+            ),
             "Profitto / perdita [USD]": out["Profitto / perdita [USD]"].sum(),
         }]
     )
@@ -3621,6 +3304,7 @@ else:
                 "Minato DESMO [BTC]": "{:,.6f}",
                 "Hosting clienti [USD]": "{:,.2f}",
                 "Costi elettrici totali [USD]": "{:,.2f}",
+                "Costo medio energia [USD/MWh]": "{:,.2f}",
                 "Profitto / perdita [USD]": "{:,.2f}",
             }
         ),
@@ -3635,6 +3319,68 @@ else:
         file_name="desmo_monthly_overview.csv",
         mime="text/csv",
     )
+
+    # -----------------------------
+    # 📊 Grafico mensile (P&L) – barre + linea profitto
+    # -----------------------------
+    st.markdown("### 📊 P&L mensile – Ricavi vs Costi (barre) + Profitto (linea)")
+
+    # Usiamo monthly_agg (senza la riga TOTALE) già calcolata sopra
+    plot_df = monthly_agg.copy()
+    plot_df = plot_df.sort_values("month").reset_index(drop=True)
+
+    fig_pl = go.Figure()
+
+    # Colonna ricavi (stack): mining DESMO + hosting clienti
+    fig_pl.add_bar(
+        x=plot_df["month_label"],
+        y=plot_df["mining_usd"],
+        name="Mining DESMO [USD]",
+        offsetgroup="revenues",
+        marker=dict(color="#1f77b4"),
+    )
+    fig_pl.add_bar(
+        x=plot_df["month_label"],
+        y=plot_df["hosting_clients_usd"],
+        name="Hosting clienti [USD]",
+        offsetgroup="revenues",
+        marker=dict(color="#2ca02c"),
+    )
+
+    # Colonna costi (separata): costi elettrici totali
+    fig_pl.add_bar(
+        x=plot_df["month_label"],
+        y=plot_df["electric_cost_total_usd"],
+        name="Costi elettrici totali [USD]",
+        offsetgroup="costs",
+        marker=dict(color="#d62728"),
+    )
+
+    # Linea profitto/perdita
+    fig_pl.add_scatter(
+        x=plot_df["month_label"],
+        y=plot_df["profit_loss_usd"],
+        name="Profitto / perdita [USD]",
+        mode="lines+markers",
+        line=dict(color="#FFFFFF", width=3),
+        yaxis="y2",
+    )
+
+    fig_pl.update_layout(
+        barmode="relative",
+        xaxis_title="Mese",
+        yaxis=dict(title="USD"),
+        yaxis2=dict(
+            title="Profitto / perdita [USD]",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+        ),
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+
+    st.plotly_chart(fig_pl, use_container_width=True)
 
 
 
@@ -4085,7 +3831,7 @@ with tab2:
 # -----------------------------
 # TAB 10 – PREZZI ERCOT LZ_WEST
 # -----------------------------
-with tab10:
+with tab9:
     st.header("⚡ Prezzi ERCOT LZ_WEST – storico a 5 minuti")
 
     if ercot_filtered is None or ercot_filtered.empty:
@@ -4384,7 +4130,7 @@ with tab10:
 # -----------------------------
 # TAB 11 – ENERGIA PROMETHEUS (DETTAGLIO)
 # -----------------------------
-with tab11:
+with tab10:
     st.header("⚡ Energia – Prometheus (daily usage)")
 
     if prometheus_filtered is None or prometheus_filtered.empty:
@@ -4524,7 +4270,7 @@ with tab11:
 # -----------------------------
 # TAB 12 – PREZZI RTM (PROMETHEUS EXTRACT)
 # -----------------------------
-with tab12:
+with tab11:
     st.header("⚡ RTM Prices – Zones/Hubs (Prometheus extract)")
 
     if rtm_prices_filtered is None or rtm_prices_filtered.empty:
@@ -5397,214 +5143,3 @@ def _find_subset_sum(amounts_cents, target_cents, tol_cents, max_items=10):
     dfs(0, [], 0)
     return best
 
-
-with tab13:
-    st.header("🧾 Riconciliazione pagamento elettrico (Synota ↔ Bank)")
-
-    if synota_df is None or synota_df.empty or "invoice_amount_usd" not in synota_df.columns:
-        st.warning("Carica un **Synota CSV** con la colonna **Invoice Amount** per usare questa tab.")
-        st.stop()
-
-    if bank_df is None or bank_df.empty:
-        st.info("Carica in sidebar il **Chase Activity CSV** per avviare la riconciliazione.")
-        st.stop()
-
-    st.caption("Logica: prendo gli addebiti bancari con 'SYNOTA' e li confronto con i costi dal CSV Synota.")
-
-    colA, colB, colC, colD = st.columns(4)
-    with colA:
-        date_window_days = st.number_input("Finestra date ± giorni", min_value=0, value=7, step=1)
-    with colB:
-        tolerance_usd = st.number_input("Tolleranza match [USD]", min_value=0.0, value=1.00, step=0.25)
-    with colC:
-        allow_sum_match = st.checkbox("Permetti match per somma (1 bank ↔ N Synota)", value=True)
-    with colD:
-        max_items_sum = st.number_input("Max righe Synota in un match-somma", min_value=2, value=10, step=1)
-
-    # --- filtri sorgenti ---
-    syn_cost = synota_df[["date", "invoice_amount_usd"]].dropna().copy()
-    syn_cost["date"] = pd.to_datetime(syn_cost["date"]).dt.normalize()
-    syn_cost["synota_amount"] = syn_cost["invoice_amount_usd"].astype(float).abs()
-    syn_cost = syn_cost.sort_values("date").reset_index(drop=True)
-
-    bank = bank_df.copy()
-    bank["date"] = pd.to_datetime(bank["date"]).dt.normalize()
-    bank["bank_amount"] = bank["amount"].astype(float).abs()
-
-    # Solo addebiti Synota (DEBIT) – filtro testo
-    bank_synota = bank[
-        bank["description"].str.contains("SYNOTA", case=False, na=False)
-    ].copy()
-
-    # opzionale: prendi solo DEBIT
-    bank_synota = bank_synota[bank_synota["amount"] < 0].copy()
-    bank_synota = bank_synota.sort_values("date").reset_index(drop=True)
-
-    if bank_synota.empty:
-        st.warning("Nessun movimento in banca contenente 'SYNOTA' (DEBIT). Controlla il CSV.")
-        st.stop()
-
-    tol_cents = int(round(tolerance_usd * 100))
-
-    # --- matching 1:1 prima ---
-    syn_used = set()
-    matches = []
-
-    for bi, brow in bank_synota.iterrows():
-        bdate = brow["date"]
-        bamt_c = int(round(brow["bank_amount"] * 100))
-
-        start = bdate - pd.Timedelta(days=int(date_window_days))
-        end = bdate + pd.Timedelta(days=int(date_window_days))
-
-        candidates = syn_cost[
-            (syn_cost["date"] >= start) &
-            (syn_cost["date"] <= end) &
-            (~syn_cost.index.isin(list(syn_used)))
-        ].copy()
-
-        if candidates.empty:
-            continue
-
-        candidates["syn_cents"] = (candidates["synota_amount"] * 100).round().astype(int)
-        candidates["diff_cents"] = (candidates["syn_cents"] - bamt_c).abs()
-
-        # prendi candidato più vicino entro tolleranza
-        ok = candidates[candidates["diff_cents"] <= tol_cents].copy()
-        if not ok.empty:
-            ok["date_diff"] = (ok["date"] - bdate).abs()
-            ok = ok.sort_values(["diff_cents", "date_diff"]).head(1)
-            si = int(ok.index[0])
-
-            syn_used.add(si)
-            matches.append({
-                "bank_date": bdate,
-                "bank_desc": brow["description"],
-                "bank_amount_usd": float(brow["bank_amount"]),
-                "synota_dates": [syn_cost.loc[si, "date"]],
-                "synota_amount_usd": float(syn_cost.loc[si, "synota_amount"]),
-                "delta_usd": float(syn_cost.loc[si, "synota_amount"] - float(brow["bank_amount"])),
-                "match_type": "1:1"
-            })
-
-    # --- matching per somma (1 bank ↔ N synota) ---
-    if allow_sum_match:
-        unmatched_bank = []
-        matched_bank_keys = {(m["bank_date"], m["bank_amount_usd"]) for m in matches}
-        for bi, brow in bank_synota.iterrows():
-            key = (brow["date"], float(brow["bank_amount"]))
-            if key not in matched_bank_keys:
-                unmatched_bank.append((bi, brow))
-
-        for bi, brow in unmatched_bank:
-            bdate = brow["date"]
-            bamt = float(brow["bank_amount"])
-            target_c = int(round(bamt * 100))
-
-            start = bdate - pd.Timedelta(days=int(date_window_days))
-            end = bdate + pd.Timedelta(days=int(date_window_days))
-
-            pool = syn_cost[
-                (syn_cost["date"] >= start) &
-                (syn_cost["date"] <= end) &
-                (~syn_cost.index.isin(list(syn_used)))
-            ].copy()
-
-            if pool.empty:
-                continue
-
-            pool["syn_cents"] = (pool["synota_amount"] * 100).round().astype(int)
-            amounts = pool["syn_cents"].tolist()
-
-            subset = _find_subset_sum(amounts, target_c, tol_cents, max_items=int(max_items_sum))
-            if subset is None:
-                continue
-
-            # subset contiene indici rispetto a pool (posizioni), convertiamo a indici reali syn_cost
-            chosen_pool = pool.iloc[subset].copy()
-            chosen_idx = chosen_pool.index.tolist()
-
-            for si in chosen_idx:
-                syn_used.add(int(si))
-
-            syn_sum = chosen_pool["synota_amount"].sum()
-            delta = syn_sum - bamt
-
-            matches.append({
-                "bank_date": bdate,
-                "bank_desc": brow["description"],
-                "bank_amount_usd": bamt,
-                "synota_dates": chosen_pool["date"].tolist(),
-                "synota_amount_usd": float(syn_sum),
-                "delta_usd": float(delta),
-                "match_type": f"1:{len(chosen_pool)}"
-            })
-
-    # --- output tables ---
-    matches_df = pd.DataFrame(matches)
-    if not matches_df.empty:
-        matches_df = matches_df.sort_values(["bank_date", "bank_amount_usd"]).reset_index(drop=True)
-
-        # pretty synota_dates
-        matches_df["synota_dates"] = matches_df["synota_dates"].apply(
-            lambda lst: ", ".join([pd.to_datetime(x).date().isoformat() for x in lst]) if isinstance(lst, list) else ""
-        )
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Movimenti banca SYNOTA", len(bank_synota))
-        with col2:
-            st.metric("Match trovati", len(matches_df))
-        with col3:
-            st.metric("Totale delta assoluto [USD]", f"{matches_df['delta_usd'].abs().sum():,.2f}")
-
-        st.markdown("### ✅ Match trovati")
-        st.dataframe(
-            matches_df.rename(columns={
-                "bank_date": "Bank date",
-                "bank_desc": "Bank description",
-                "bank_amount_usd": "Bank amount [USD]",
-                "synota_dates": "Synota date(s)",
-                "synota_amount_usd": "Synota sum [USD]",
-                "delta_usd": "Delta (Synota - Bank) [USD]",
-                "match_type": "Match type",
-            }).style.format({
-                "Bank amount [USD]": "{:,.2f}",
-                "Synota sum [USD]": "{:,.2f}",
-                "Delta (Synota - Bank) [USD]": "{:+,.2f}",
-            }),
-            use_container_width=True
-        )
-    else:
-        st.warning("Nessun match trovato con i parametri attuali. Prova ad aumentare la finestra date o la tolleranza.")
-
-    # --- Unmatched lists ---
-    matched_bank_idx = set()
-    if not matches_df.empty:
-        # ricostruisco chi è matchato (approssimazione: bank_date+amount)
-        keys = set(zip(matches_df["bank_date"], matches_df["bank_amount_usd"]))
-        for i, r in bank_synota.iterrows():
-            if (r["date"], float(r["bank_amount"])) in keys:
-                matched_bank_idx.add(i)
-
-    bank_unmatched = bank_synota.drop(index=list(matched_bank_idx), errors="ignore").copy()
-    syn_unmatched = syn_cost.drop(index=list(syn_used), errors="ignore").copy()
-
-    st.markdown("### ⚠️ Non riconciliati (Bank → SYNOTA)")
-    st.dataframe(
-        bank_unmatched[["date", "description", "amount"]].rename(columns={
-            "date": "Bank date",
-            "description": "Bank description",
-            "amount": "Bank amount (signed)",
-        }),
-        use_container_width=True
-    )
-
-    st.markdown("### ⚠️ Non riconciliati (Synota → Bank)")
-    st.dataframe(
-        syn_unmatched[["date", "synota_amount"]].rename(columns={
-            "date": "Synota date",
-            "synota_amount": "Synota invoice [USD]",
-        }).style.format({"Synota invoice [USD]": "{:,.2f}"}),
-        use_container_width=True
-    )
